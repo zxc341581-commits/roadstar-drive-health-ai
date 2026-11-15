@@ -608,15 +608,18 @@ function budget(r){
   const planItems=plan.items.filter(item=>item.part===budgetPart).sort((a,b)=>a.month.localeCompare(b.month));
   const pending=plan.near.filter(item=>item.part===budgetPart);
   const planned=planItems.find(item=>item.task!=='점검');
-  const filled=quote??referenceCosts[referencePart]??(planned&&priced(planned)?planned:null);
+  const existingQuote=budgets.indexOf(planned);
+  const suggested=referencePart===null&&existingQuote<0?planned:null;
+  const filled=quote??referenceCosts[referencePart]??(suggested&&priced(suggested)?suggested:null);
+  const quoteAction=existingQuote<0?'이 부품의 견적 입력':'등록 견적 수정';
   const options=quoteParts.filter(p=>!knownPart(p)||vehicleParts().includes(p)||p===quote?.part)
     .map(p=>`<option value="${p}"${p===part?' selected':''}>${partName(p)}</option>`).join('');
-  const selectedMonth=quote?(validMonth(quote.month)?quote.month:''):planned?.month??month;
-  const focus=budgetPart?`<article class="card budget-section" id="part-budget"><h2>${partName(budgetPart)} 정비 준비</h2>
+  const selectedMonth=quote?(validMonth(quote.month)?quote.month:''):suggested?.month??month;
+  const focus=budgetPart?`<article class="card budget-section" id="part-budget"><h2 id="part-budget-title" tabindex="-1">${partName(budgetPart)} 정비 준비</h2>
     ${pending.length?`<p class="warn">${pending.map(serviceNotice).join(' · ')}</p>`:''}
     ${planItems.length?`<ul>${planItems.map(item=>`<li>${monthLabel(item.month)} · ${plannedName(item)} · ${priced(item)?estimateRange([item]):'비용 미등록'}</li>`).join('')}</ul>`
       :'<p>등록한 정비 이력과 기준 또는 예정 월이 있는 견적이 필요합니다.</p>'}
-    <button type="button" class="button primary" id="jump-quote">이 부품의 견적 입력</button></article>`:'';
+    <button type="button" class="button primary" id="jump-quote" data-quote-index="${existingQuote}">${quoteAction}</button></article>`:'';
   const braking=count(r,'brake');
   const turns=speedOnly()?null:count(r,'turn');
   const brakeNotice=braking
@@ -874,9 +877,15 @@ function render(){
       document.querySelector(premiumInput).value=draft;
       document.querySelector('#budget-period').focus?.({preventScroll:true});
     };
-    if(budgetPart)document.querySelector('#jump-quote').onclick=()=>{
+    const openQuote=index=>{
+      editingQuote=index<0?null:index;
+      referencePart=null;
+      render();
       document.querySelector('#estimate').scrollIntoView?.({block:'start'});
       document.querySelector('#low').focus?.({preventScroll:true});
+    };
+    if(budgetPart)document.querySelector('#jump-quote').onclick=event=>{
+      openQuote(Number(event.currentTarget.dataset.quoteIndex));
     };
     document.querySelector('#wear-part').onchange=e=>{
       if(quoteParts.slice(0,2).includes(e.target.value)){
@@ -952,12 +961,7 @@ function render(){
       render();
       document.querySelector('#plan-month')?.focus?.();
     });
-    document.querySelectorAll('[data-edit]').forEach(button=>button.onclick=()=>{
-      editingQuote=Number(button.dataset.edit);
-      referencePart=null;
-      render();
-      document.querySelector('#low')?.focus?.();
-    });
+    document.querySelectorAll('[data-edit]').forEach(button=>button.onclick=()=>openQuote(Number(button.dataset.edit)));
     document.querySelectorAll('[data-delete]').forEach(button=>button.onclick=()=>{
       commit(budgets.filter((_,index)=>index!==Number(button.dataset.delete)));
     });
@@ -970,7 +974,10 @@ function showPage(page,part=null){
   budgetPart=part;
   state.page=page;
   render();
-  window.scrollTo?.(0,0);
+  if(page==='budget'&&part){
+    document.querySelector('#part-budget').scrollIntoView?.({block:'start'});
+    document.querySelector('#part-budget-title').focus?.({preventScroll:true});
+  }else window.scrollTo?.(0,0);
 }
 
 function setupTheme(){

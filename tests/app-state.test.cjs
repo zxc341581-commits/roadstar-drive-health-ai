@@ -489,3 +489,18 @@ test('budget periods affect the visible months and subtotal, persist, and preser
   app.go('budget');
   assert.match(view(),/12개월 확인된 비용 합계/);
 });
+
+
+test('a part budget opens and updates the existing estimate without counting it twice',()=>{
+  const original=[{part:'브레이크',month:'2027-01',low:335,high:394}];
+  const storage=new Map([[budgetKey,JSON.stringify(original)]]);
+  const app=start(storage);
+  app.context.showPage('budget','브레이크');
+  const html=()=>app.node('#content').innerHTML;
+  assert.match(html(),/data-quote-index="0">등록 견적 수정/);
+  app.node('#jump-quote').onclick({currentTarget:{dataset:{quoteIndex:'0'}}});
+  assert.match(html(),/변경 저장/);
+  app.submit('350','420','2027-01');
+  assert.deepEqual(JSON.parse(storage.get(budgetKey)),[{part:'브레이크',month:'2027-01',low:350,high:420}]);
+  assert.match(html().split('</article>')[0],/\$350\.00.*\$420\.00/);
+});
