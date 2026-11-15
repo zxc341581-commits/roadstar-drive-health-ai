@@ -151,6 +151,7 @@ let selectedPart='브레이크';
 function readStoredRules(raw){
   return Object.fromEntries(Object.entries(raw??{}).filter(([part,rule])=>knownPart(part)&&rule
     &&intIn(rule.intervalKm,0,1000000)&&intIn(rule.intervalMonths,0,240)
+    &&intIn(rule.inspectionKm??0,0,1000000)&&intIn(rule.inspectionMonths??0,0,240)
     &&((rule.low===null&&rule.high===null)||(Number.isFinite(rule.low)&&Number.isFinite(rule.high)
     &&rule.low>=0&&rule.high>=rule.low&&rule.high<=100000))));
 }
@@ -199,35 +200,54 @@ function saveGarage(next,error){
   render();
 }
 
-function dueLabel(part){
-  const due=serviceDue(garage,garage.records,part);
-  if(!due)return '최근 교체일과 '+usageLabels[garage.usage]+' 기준 필요';
-  if(due.overdue)return '등록 기준 도달 · 점검 일정 확인';
+function dueLabel(due,requiredRecord){
+  if(!due)return requiredRecord+' 이력과 '+usageLabels[garage.usage]+' 기준 필요';
   const mileage=due.dueKm===null?'':due.dueKm.toLocaleString('ko-KR')+' km';
-  return [due.month?monthLabel(due.month):'',mileage].filter(Boolean).join(' · ')||'주행거리 또는 예정 월 미정';
+  const timing=[due.month?monthLabel(due.month):'',mileage].filter(Boolean).join(' · ');
+  if(due.overdue)return '기준 도달'+(timing?' · '+timing:'');
+  return timing||'예정 월 미정';
 }
+
+const partName=part=>part==='브레이크'?'브레이크 패드':part==='배터리'?'12V 배터리':part;
 
 function partDashboard(r){
   const available=vehicleParts();
   if(!available.includes(selectedPart))selectedPart=available[0];
   const part=selectedPart, spec=serviceParts[part], rule=serviceRules(garage)[part];
-  const options=available.map(name=>`<button type="button" class="button ${name===part?'primary':''}" data-part-card="${name}" aria-pressed="${name===part}">${name==='브레이크'?'브레이크 패드':name==='배터리'?'12V 배터리':name}</button>`).join('');
+  const nextMonth=nextCalendarMonth();
+  const schedules=available.map(name=>{
+    const inspection=inspectionDue(garage,garage.records,name);
+    const replacement=serviceDue(garage,garage.records,name);
+    const dates=[inspection,replacement].filter(Boolean);
+    const reached=dates.some(due=>due.overdue);
+    const soon=dates.some(due=>due.month&&due.month<=nextMonth);
+    const priority=reached?0:soon?1:dates.length?2:3;
+    const status=['기준 도달','다음 달까지 예정','기준 등록됨','정보 필요'][priority];
+    return {name,inspection,replacement,priority,status};
+  }).sort((a,b)=>a.priority-b.priority);
+  const current=schedules.find(item=>item.name===part);
+  const options=schedules.map(({name,priority,status})=>`<button type="button" class="part-card" data-part-card="${name}" aria-pressed="${name===part}">
+    <strong>${partName(name)}</strong><span class="signal${priority===0?' signal-detected':''}">${status}</span></button>`).join('');
   const knownPrice=rule?.low!=null?{low:rule.low,high:rule.high}:referenceCosts[part];
   const evidence=part==='브레이크'?'급감속 '+count(r,'brake')+'건'
     :part==='타이어'?(speedOnly()?'횡가속도 미수집':'급코너링 '+count(r,'turn')+'건')
     :part==='변속기 오일'?'급가속 '+count(r,'accel')+'건'
     :['엔진오일','배터리'].includes(part)&&r.km>0&&r.km<10?'이번 기록 10 km 미만':'정비 이력·등록 기준';
   return title('소모품 통합 관리','차량 정보, 등록한 정비 기준과 주행 기록으로 점검 우선순위를 살펴보세요.')+
-    `<div class="actions part-tabs" aria-label="소모품 선택">${options}</div>
-    <div class="split budget-section"><article class="card"><h2>${part==='브레이크'?'브레이크 패드':part==='배터리'?'12V 배터리':part}</h2>
+    `<div class="part-grid" aria-label="소모품 점검 상태">${options}</div>
+    <div class="split budget-section"><article class="card"><h2>${partName(part)}</h2>
     <p class="pill inline-pill">${evidence}</p><p>${spec.habit}</p>
     <p><strong>점검 항목</strong> ${spec.check}</p><p><strong>추천 행동</strong> ${spec.coach}</p>
-    <dl class="info-list"><div><dt>예상 교체 기준</dt><dd>${dueLabel(part)}</dd></div>
+    <dl class="info-list"><div><dt>다음 점검</dt><dd>${dueLabel(current.inspection,'점검·교체')}</dd></div>
+    <div><dt>예상 교체</dt><dd>${dueLabel(current.replacement,'교체')}</dd></div>
     <div><dt>예상 정비비</dt><dd>${knownPrice?estimateRange([knownPrice]):'미입력'} ${knownPrice&&rule?.low==null?'(미국 참고가)':''}</dd></div></dl>
     <button type="button" id="parts-to-budget" class="button">My Car Budget 보기</button></article>
-    <article class="card"><h2>차량별 정비 기준</h2><p class="pill inline-pill">${usageLabels[garage.usage]}</p><p>제조사 매뉴얼이나 정비소의 교체 주기와 견적을 입력하세요. 주행거리와 기간이 모두 있으면 먼저 도달하는 기준을 사용합니다.</p>
-    <p class="subtle">차량 매뉴얼에서 해당하는 기준만 등록하세요. 운행 조건은 차량 데이터에서 바꿀 수 있습니다. 12V 배터리는 구동용 배터리와 별도로 관리합니다.</p>
+    <article class="card"><h2>차량별 정비 기준</h2><p class="pill inline-pill">${usageLabels[garage.usage]}</p>
+    <p>차량 매뉴얼에 맞춰 기준을 입력하세요. 거리와 기간 중 먼저 도달하는 기준을 적용합니다.</p>
+    <p class="subtle">다음 점검은 최근 점검 또는 교체부터, 다음 교체는 최근 교체부터 계산합니다. 12V 배터리는 구동용 배터리와 별도로 관리합니다.</p>
     <form id="service-rule-form"><div class="split quote-fields">
+    <label class="field">점검 주기 (km)<input type="number" name="inspectionKm" min="1" max="1000000" value="${rule?.inspectionKm||''}"></label>
+    <label class="field">점검 주기 (개월)<input type="number" name="inspectionMonths" min="1" max="240" value="${rule?.inspectionMonths||''}"></label>
     <label class="field">교체 주기 (km)<input type="number" name="intervalKm" min="1" max="1000000" value="${rule?.intervalKm||''}"></label>
     <label class="field">교체 주기 (개월)<input type="number" name="intervalMonths" min="1" max="240" value="${rule?.intervalMonths||''}"></label>
     <label class="field">최소 교체비 (USD)<input type="number" name="low" min="0" max="100000" step=".01" value="${rule?.low??''}"></label>
@@ -438,7 +458,7 @@ function ownershipForecast(month){
     <p class="subtle">예정 월이 없는 견적은 제외합니다. 같은 부품의 등록 견적이 있으면 자동 전망과 중복 합산하지 않습니다. 월 보험료는 입력한 금액으로 유지합니다.</p>
     <p class="subtle">현재 운행 조건에서 예상 교체 월과 등록 교체비가 모두 있는 부품만 자동 반영합니다.</p>
     <p class="subtle">교체 전망 반영 ${projections.length}건 ${projections.map(q=>escapeText(q.part)+' · '+monthLabel(q.month)).join(', ')}</p>
-    <div class="forecast-total"><span>${insurance===null?'12개월 등록 정비비 · 보험료 미입력':'12개월 정비비와 보험료 합계'}</span>
+    <div class="forecast-total"><span>${insurance===null?'12개월 예상 정비비 · 보험료 미입력':'12개월 정비비와 보험료 합계'}</span>
     <strong class="big">${insurance===null?estimateRange([{low:cost.low/100,high:cost.high/100}]):total}</strong></div>
     <details><summary>월별 지출 내역</summary><div class="forecast-table">
     <table><thead><tr><th scope="col">예정 월</th><th scope="col">정비비</th><th scope="col">보험료</th><th scope="col">합계</th></tr></thead><tbody>${rows}</tbody></table>
@@ -498,6 +518,8 @@ function budget(r){
   const monthly=budgets.filter(q=>q.month===month);
   const projected=monthlyServiceProjections(month).filter(q=>q.month===month);
   const monthItems=[...monthly,...projected];
+  const premium=forecast.premium;
+  const totalItems=premium===null?monthItems:[...monthItems,{low:premium,high:premium}];
   const references=monthly.filter(q=>q.reference===true).length;
   const quote=editingQuote===null?null:budgets[editingQuote];
   const part=quote?.part??referencePart;
@@ -523,8 +545,10 @@ function budget(r){
     <button class="button" data-delete="${i}" aria-label="${b.part} 견적 삭제">삭제</button></div></div>`).join('');
   return title('My Car Budget','정비 견적 범위와 소모품 교체 전망을 월별·연간 유지비로 확인하세요.')+
     `<article class="card budget-summary"><div><span class="subtle">${monthLabel(month)}</span>
-    <h2>다음 달 예상 지출</h2><p>${monthlyDetail}</p></div>
-    <strong class="big">${monthItems.length?estimateRange(monthItems):'—'}</strong></article>
+    <h2>다음 달 예상 지출</h2><p>${monthlyDetail}</p>
+    <dl class="info-list"><div><dt>예상 정비비</dt><dd>${monthItems.length?estimateRange(monthItems):'—'}</dd></div>
+    <div><dt>월 보험료</dt><dd>${premium===null?'미입력':usd(premium)}</dd></div></dl></div>
+    <strong class="big">${totalItems.length?estimateRange(totalItems):'—'}</strong></article>
     <section class="budget-section" aria-labelledby="care-title"><div class="section-heading">
     <h2 id="care-title">주행습관으로 확인할 부품</h2><span class="pill">${source}</span></div>
     <div class="split">
@@ -689,20 +713,23 @@ function render(){
     document.querySelectorAll('[data-part-card]').forEach(button=>button.onclick=()=>{
       selectedPart=button.dataset.partCard;
       render();
-      document.querySelector('[aria-pressed="true"]')?.focus?.();
+      document.querySelector('[data-part-card][aria-pressed="true"]')?.focus();
     });
     document.querySelector('#service-rule-form').onsubmit=event=>{
       event.preventDefault();
       const form=new FormData(event.target);
       const intervalKm=readInteger(form,'intervalKm')??0;
       const intervalMonths=readInteger(form,'intervalMonths')??0;
+      const inspectionKm=readInteger(form,'inspectionKm')??0;
+      const inspectionMonths=readInteger(form,'inspectionMonths')??0;
       const low=readAmount(form,'low'),high=readAmount(form,'high');
       if(!intIn(intervalKm,0,1000000)||!intIn(intervalMonths,0,240)
+          ||!intIn(inspectionKm,0,1000000)||!intIn(inspectionMonths,0,240)
           ||(low===null)!==(high===null)||Number.isNaN(low)||Number.isNaN(high)||high<low){
-        document.querySelector('#rule-error').textContent='교체 기준과 최소·최대 비용 범위를 확인해 주세요.';
+        document.querySelector('#rule-error').textContent='점검·교체 기준과 최소·최대 비용 범위를 확인해 주세요.';
         return;
       }
-      const rule={intervalKm,intervalMonths,low,high};
+      const rule={intervalKm,intervalMonths,inspectionKm,inspectionMonths,low,high};
       const key=garage.usage==='severe'?'severeRules':'rules';
       saveGarage({...garage,[key]:{...garage[key],[selectedPart]:rule}},'#rule-error');
     };

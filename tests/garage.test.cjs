@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {tripContext,serviceDue}=require('../app/src/main/assets/garage.js');
+const {tripContext,serviceDue,inspectionDue}=require('../app/src/main/assets/garage.js');
 const {parseCSV,hasGap}=require('../app/src/main/assets/engine.js');
 
 test('RPM and idle are calculated only from available continuous samples',()=>{
@@ -29,4 +29,19 @@ test('severe driving uses only the separately registered schedule',()=>{
   profile.severeRules={냉각수:{intervalMonths:3}};
   assert.equal(serviceDue(profile,[record],'냉각수',today).month,'2026-03');
   assert.equal(serviceDue({...profile,usage:'normal'},[record],'냉각수',today).month,'2026-12');
+});
+
+test('inspection and replacement use their own intervals and a deadline applies all day',()=>{
+  const today=new Date(2026,0,31,7);
+  const profile={km:49000,monthlyKm:1000,rules:{타이어:{inspectionKm:5000,inspectionMonths:3,intervalKm:20000,intervalMonths:24}}};
+  const entries=[
+    {part:'타이어',action:'교체',date:'2025-01-20',km:38000},
+    {part:'타이어',action:'점검',date:'2025-10-31',km:47000},
+    {part:'타이어',action:'정비',date:'2026-01-25',km:48000},
+  ];
+  assert.deepEqual(inspectionDue(profile,entries,'타이어',today),{dueKm:52000,month:'2026-01',overdue:true});
+  assert.deepEqual(serviceDue(profile,entries,'타이어',today),{dueKm:58000,month:'2026-11',overdue:false});
+  delete profile.rules.타이어.inspectionMonths;
+  delete profile.rules.타이어.inspectionKm;
+  assert.equal(inspectionDue(profile,entries,'타이어',today),null);
 });

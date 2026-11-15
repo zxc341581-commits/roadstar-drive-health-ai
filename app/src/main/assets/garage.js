@@ -35,12 +35,24 @@ function serviceRules(profile){
 
 function serviceDue(profile,records,part,today=new Date()){
   const rule=serviceRules(profile)[part];
-  const last=records.filter(record=>record.part===part&&record.action==='교체')
+  return serviceSchedule(profile,records,part,rule?.intervalKm,rule?.intervalMonths,false,today);
+}
+
+function inspectionDue(profile,records,part,today=new Date()){
+  const rule=serviceRules(profile)[part];
+  return serviceSchedule(profile,records,part,rule?.inspectionKm,rule?.inspectionMonths,true,today);
+}
+
+function serviceSchedule(profile,records,part,intervalKm,intervalMonths,includeInspection,today){
+  if(!intervalKm&&!intervalMonths)return null;
+  const last=records.filter(record=>record.part===part&&(record.action==='교체'||(includeInspection&&record.action==='점검')))
     .sort((a,b)=>b.date.localeCompare(a.date)||b.km-a.km)[0];
-  if(!last||!rule||(!rule.intervalKm&&!rule.intervalMonths))return null;
+  if(!last)return null;
+  // Compare local calendar days so a deadline applies from the start of that day.
+  today=new Date(today.getFullYear(),today.getMonth(),today.getDate(),12);
   const candidates=[];
-  const dueKm=rule.intervalKm>0?last.km+rule.intervalKm:null;
-  if(rule.intervalMonths>0)candidates.push(addCalendarMonths(new Date(last.date+'T12:00:00'),rule.intervalMonths));
+  const dueKm=intervalKm>0?last.km+intervalKm:null;
+  if(intervalMonths>0)candidates.push(addCalendarMonths(new Date(last.date+'T12:00:00'),intervalMonths));
   if(dueKm!==null&&profile.km!==null){
     const remaining=dueKm-profile.km;
     if(remaining<=0)candidates.push(today);
@@ -51,4 +63,4 @@ function serviceDue(profile,records,part,today=new Date()){
   return {dueKm,month:key,overdue:Boolean(due&&due<=today)||Boolean(dueKm!==null&&profile.km!==null&&dueKm<=profile.km)};
 }
 
-if(typeof module!=='undefined')module.exports={serviceParts,tripContext,addCalendarMonths,serviceDue,serviceRules};
+if(typeof module!=='undefined')module.exports={serviceParts,tripContext,addCalendarMonths,serviceDue,inspectionDue,serviceRules};

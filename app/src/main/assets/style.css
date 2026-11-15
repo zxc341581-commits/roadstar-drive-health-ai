@@ -53,9 +53,12 @@ button:disabled{cursor:default;opacity:.55}
 .forecast-table table{min-width:470px;width:100%;border-collapse:collapse;margin-top:8px}
 .forecast-table th,.forecast-table td{padding:9px 6px;text-align:left;border-bottom:1px solid var(--edge);white-space:nowrap}
 details summary{cursor:pointer;color:var(--blue);font-weight:700}
-.part-tabs{flex-wrap:wrap}
+.part-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.part-card{display:grid;justify-items:start;gap:7px;min-width:0;border:1px solid var(--edge);border-radius:10px;background:var(--panel);padding:10px;text-align:left}
+.part-card[aria-pressed="true"]{border-color:var(--accent);box-shadow:inset 0 -3px var(--active)}
+.budget-summary .info-list{margin-bottom:0}
 .info-list{margin:14px 0}
 .info-list div{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;padding:8px 0;border-bottom:1px solid var(--edge)}
 .info-list dt{color:var(--muted)}.info-list dd{margin:0;font-weight:700;color:var(--blue)}
 .inline-pill{display:inline-block}
-@media(max-width:430px){nav button span{font-size:9px}.part-tabs .button{padding:8px}}
+@media(max-width:430px){nav button span{font-size:9px}}
