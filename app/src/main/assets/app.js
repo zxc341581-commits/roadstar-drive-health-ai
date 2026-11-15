@@ -220,6 +220,107 @@ function careCard(part,events,signal,notice,check,action){
     <button type="button" class="button" data-reference="${part}">${action}</button>
   </article>`;
 }
+const forecastKey='drive-health-forecast-v1';
+const wearFields=[
+  ['beforeKm','이전 점검 누적 주행거리 (km)','1',0],
+  ['nowKm','최근 점검 누적 주행거리 (km)','1',1],
+  ['beforeMm','이전 측정 두께 (mm)','0.01',0],
+  ['nowMm','최근 측정 두께 (mm)','0.01',0],
+  ['newMm','새 부품 기준 두께 (mm)','0.01',0.01],
+  ['limitMm','정비소·매뉴얼 점검 기준 두께 (mm)','0.01',0],
+  ['monthlyKm','예상 월 주행거리 (km)','1',1],
+  ['improvement','습관 개선 후 마모율 감소 가정 (%)','1',0,99]
+];
+let forecast={part:'브레이크',parts:{},premium:null};
+try{
+  const saved=JSON.parse(localStorage.getItem(forecastKey)||'null');
+  if(saved&&typeof saved==='object'){
+    for(const part of Object.keys(referenceCosts)){
+      try{
+        calculateWear(saved.parts?.[part]??{});
+        forecast.parts[part]=saved.parts[part];
+      }catch{}
+    }
+    if(quoteParts.slice(0,2).includes(saved.part))forecast.part=saved.part;
+    if(Number.isFinite(saved.premium)&&saved.premium>=0&&saved.premium<=100000)forecast.premium=saved.premium;
+  }
+}catch{}
+
+function ownershipForecast(month){
+  const months=forecastMonths(month,budgets,forecast.premium);
+  const cost=months.reduce((total,entry)=>({low:total.low+Math.round(entry.low*100),
+    high:total.high+Math.round(entry.high*100)}),{low:0,high:0});
+  const insurance=forecast.premium===null?null:Math.round(forecast.premium*100)*months.length/100;
+  const total=insurance===null?'—':estimateRange([{low:cost.low/100+insurance,high:cost.high/100+insurance}]);
+  const rows=months.map(entry=>{
+    const range=estimateRange([entry]);
+    const combined=insurance===null?'—':estimateRange([{low:entry.low+entry.premium,high:entry.high+entry.premium}]);
+    return `<tr><th scope="row">${monthLabel(entry.month)}</th><td>${range}</td>
+      <td>${insurance===null?'미입력':usd(entry.premium)}</td><td>${combined}</td></tr>`;
+  }).join('');
+  return `<article class="card budget-section"><h2>정비비·보험료 통합 지출 예측</h2>
+    <p>다음 달부터 12개월 동안 예정된 정비 견적과 입력한 월 보험료를 합산합니다.</p>
+    <form id="insurance-form" class="forecast-form">
+      <label class="field">월 자동차 보험료 (USD)<input name="premium" type="number" min="0" max="100000" step="0.01" value="${forecast.premium??''}" placeholder="예: 150"></label>
+      <button class="button primary">보험료 반영</button>
+      <p id="insurance-error" class="warn" role="status"></p>
+    </form>
+    <p class="subtle">예정 월이 없는 정비 견적은 제외합니다. 입력한 보험료는 12개월 동안 같은 금액으로 계산합니다.</p>
+    <div class="forecast-total"><span>${insurance===null?'12개월 등록 정비비 · 보험료 미입력':'12개월 정비비와 보험료 합계'}</span>
+    <strong class="big">${insurance===null?estimateRange([{low:cost.low/100,high:cost.high/100}]):total}</strong></div>
+    <details><summary>월별 지출 내역</summary><div class="forecast-table">
+    <table><thead><tr><th scope="col">예정 월</th><th scope="col">정비비</th><th scope="col">보험료</th><th scope="col">합계</th></tr></thead><tbody>${rows}</tbody></table>
+    </div></details></article>`;
+}
+function partForecast(r){
+  const data=forecast.parts[forecast.part];
+  const result=data?calculateWear(data):null;
+  const prices=referenceCosts[forecast.part];
+  const eventText=forecast.part==='브레이크'?'급감속 '+count(r,'brake')+'건'
+    :speedOnly()?'횡가속도 미수집':'급코너링 '+count(r,'turn')+'건';
+  const comparable=r.km>0&&state.base?.km>0&&!r.missingSeconds&&!state.base.missingSeconds
+    &&r.analysisVersion===state.base.analysisVersion&&r.vehicleClock===Boolean(state.base.vehicleClock)
+    &&r.fingerprint!==state.base.fingerprint&&!baselineIsCurrent&&(comparableRoute||state.improved)
+    &&(forecast.part==='브레이크'||!speedOnly());
+  const eventType=forecast.part==='브레이크'?'brake':'turn';
+  const change=comparable
+    ?`비교한 주행의 100km당 이벤트 ${fmt(rate(count(state.base,eventType),state.base.km))}
+      → ${fmt(rate(count(r,eventType),r.km))}건. `
+    :'';
+  const options=Object.keys(referenceCosts).map(part=>`<option${part===forecast.part?' selected':''}>${part}</option>`).join('');
+  const fields=wearFields.map(([name,label,step,min,max])=>`<label class="field">${label}
+    <input type="number" name="${name}" min="${min}" step="${step}" ${max===undefined?'':`max="${max}"`}
+    value="${data?.[name]??(name==='improvement'?0:'')}" required></label>`).join('');
+  const mileage=km=>Math.round(km).toLocaleString('ko-KR')+' km';
+  const reserve=share=>estimateRange([{low:prices.low*share,high:prices.high*share}]);
+  return `<section class="budget-section" aria-labelledby="forecast-title">
+    <div class="section-heading"><h2 id="forecast-title">부품 수명과 정비비 전망</h2></div>
+    <div class="split"><article class="card"><h3>부품 점검값과 운전습관 시나리오</h3>
+    <p>교체 이력 없이 같은 부품을 두 번 측정한 값을 입력하세요.</p>
+    <form id="wear-form">
+    <label class="field">분석할 부품<select id="wear-part" name="part">${options}</select></label>
+    <div class="split quote-fields">${fields}</div>
+    <p class="subtle">${change}운전 이벤트 빈도와 마모율의 관계는 차량마다 달라, 마모율 감소는 직접 가정합니다.</p>
+    <button class="button primary">수명과 정비비 계산</button>
+    <p id="wear-error" class="warn" role="status"></p>
+    </form></article>
+    <div class="forecast-results"><article class="card"><h3>개별 부품 잔여수명</h3>
+    <p class="subtle">${state.demonstration?'가상 주행':'현재 주행 기록'} · ${eventText}</p>
+    <strong class="big">${result?mileage(result.remainingKm):'—'}</strong>
+    <p>${result?`최근 마모 속도가 이어지면 점검 기준까지 약 ${fmt(result.remainingKm/data.monthlyKm)}개월입니다.`:'같은 부품의 두 점검값과 주행거리를 입력하면 기준 두께까지 남은 거리를 추정합니다.'}</p>
+    </article><article class="card"><h3>운전습관 개선 시 정비비 절약 시나리오</h3>
+    <strong class="big">${result?reserve(result.savingShare):'—'}</strong>
+    <p>${result?`마모율 ${data.improvement}% 감소 가정 · 기준까지 ${mileage(result.improvedKm)} · 연간 정비비 적립 추정 ${reserve(result.annualWearShare)} → ${reserve(result.annualWearShare-result.savingShare)}`:'같은 거리를 달릴 때 마모율을 낮춘 경우의 12개월 정비비 적립액 차이를 계산합니다.'}</p>
+    <p class="subtle">${prices.scope}. 비용은 마모량에 비례해 나눠 계산한 값입니다. 실제 절약액과 교체 시점은 점검·견적에 따라 달라집니다.</p>
+    </article></div></div>
+    </section>`;
+}
+function storeForecast(next,errorSelector){
+  try{localStorage.setItem(forecastKey,JSON.stringify(next));}
+  catch{document.querySelector(errorSelector).textContent='기기에 저장하지 못했습니다.';return;}
+  forecast=next;
+  render();
+}
 function budget(r){
   const month=nextCalendarMonth();
   const monthly=budgets.filter(q=>q.month===month);
@@ -271,7 +372,8 @@ function budget(r){
     </form></article>
     <article class="card"><h2>등록한 견적 합계</h2>
     <strong class="big">${budgets.length?estimateRange(budgets):'—'}</strong>
-    <div class="events">${rows||'<p>등록한 정비 견적이 없습니다.</p>'}</div></article></div>`;
+    <div class="events">${rows||'<p>등록한 정비 견적이 없습니다.</p>'}</div></article></div>
+    ${partForecast(r)}${ownershipForecast(month)}`;
 }
 function vehicle(){
   return title('차량 기록','차속과 변속 위치를 읽어 주차 후 주행 리포트를 엽니다.')+
@@ -395,6 +497,34 @@ function render(){
     document.querySelector('#improve').onclick=()=>{importRequest++;comparableRoute=false;baselineIsCurrent=false;Object.assign(state,{rows:demo(true),base:analyze(demo()),basePinned:false,demonstration:true,vehicleSource:'',improved:true,error:''});render();};
   }
   if(state.page==='budget'){
+    document.querySelector('#wear-part').onchange=e=>{
+      if(quoteParts.slice(0,2).includes(e.target.value)){
+        forecast={...forecast,part:e.target.value};
+        render();
+        document.querySelector('#wear-part')?.focus?.();
+      }
+    };
+    document.querySelector('#wear-form').onsubmit=e=>{
+      e.preventDefault();
+      const form=new FormData(e.target);
+      const values=Object.fromEntries(wearFields.map(([name])=>{
+        const value=form.get(name);
+        return [name,typeof value==='string'&&value.trim()?Number(value):NaN];
+      }));
+      try{calculateWear(values);}
+      catch(error){document.querySelector('#wear-error').textContent=error.message;return;}
+      storeForecast({...forecast,parts:{...forecast.parts,[forecast.part]:values}},'#wear-error');
+      document.querySelector('#forecast-title')?.scrollIntoView?.({block:'start'});
+    };
+    document.querySelector('#insurance-form').onsubmit=e=>{
+      e.preventDefault();
+      const raw=String(new FormData(e.target).get('premium')??'').trim();
+      if(raw&&(!/^\d+(?:\.\d{1,2})?$/.test(raw)||Number(raw)>100000)){
+        document.querySelector('#insurance-error').textContent='0~100,000 USD 사이에서 소수점 둘째 자리까지 입력하세요.';
+        return;
+      }
+      storeForecast({...forecast,premium:raw?Number(raw):null},'#insurance-error');
+    };
     const commit=next=>{
       try{localStorage.setItem('drive-health-budget',JSON.stringify(next));}
       catch{document.querySelector('#form-error').textContent='기기 저장소에 저장하지 못했습니다. 다시 시도해 주세요.';return;}

@@ -44,3 +44,12 @@ button:disabled{cursor:default;opacity:.55}
   nav button{flex-direction:column;line-height:1.3}
   nav button span{white-space:nowrap}
 }
+.forecast-results{display:grid;gap:14px}
+.forecast-form{display:flex;align-items:end;gap:8px;flex-wrap:wrap}
+.forecast-form .field{margin:0}
+.forecast-form .warn:empty{display:none}
+.forecast-total{background:#eef6fb;border-radius:10px;padding:12px;margin:14px 0;color:var(--blue)}
+.forecast-table{overflow-x:auto}
+.forecast-table table{min-width:470px;width:100%;border-collapse:collapse;margin-top:8px}
+.forecast-table th,.forecast-table td{padding:9px 6px;text-align:left;border-bottom:1px solid var(--edge);white-space:nowrap}
+details summary{cursor:pointer;color:var(--blue);font-weight:700}
