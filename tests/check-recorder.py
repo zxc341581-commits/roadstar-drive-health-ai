@@ -7,6 +7,7 @@ root=Path(temporary.name)
 stubs={
 "android/util/Log.java":"package android.util; public class Log {public static int w(String t,String m,Throwable e){return 0;}}",
 "android/content/Context.java":"package android.content; public class Context {}",
+"android/os/Build.java":"package android.os; public class Build {public static class VERSION {public static int SDK_INT=28;}}",
 "android/os/SystemClock.java":"package android.os; public class SystemClock { public static long now; public static long elapsedRealtime(){return now;} public static long elapsedRealtimeNanos(){return now*1_000_000L;} }",
 "android/os/HandlerThread.java":"package android.os; public class HandlerThread { public HandlerThread(String name){} public void start(){} public Object getLooper(){return null;} public void quitSafely(){} }",
 "android/os/Handler.java":"""package android.os;
@@ -23,8 +24,12 @@ public class Handler {
 "android/car/Car.java":"""package android.car;
 import android.car.hardware.property.CarPropertyManager;
 import android.content.Context;
+import android.os.Handler;
 public class Car {
  public static final String PROPERTY_SERVICE="property";
+ public static final long CAR_WAIT_TIMEOUT_DO_NOT_WAIT=0;
+ public interface CarServiceLifecycleListener {void onLifecycleChanged(Car car,boolean ready);}
+ public static Car createCar(Context context,Handler handler,long wait,CarServiceLifecycleListener listener){return new Car();}
  public static boolean failDisconnect;
  public static Car createCar(Context context){return new Car();}
  public Object getCarManager(String property){return new CarPropertyManager();}

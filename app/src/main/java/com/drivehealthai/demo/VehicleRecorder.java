@@ -6,6 +6,7 @@ import android.car.VehiclePropertyIds;
 import android.car.hardware.CarPropertyValue;
 import android.car.hardware.property.CarPropertyManager;
 import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
@@ -45,35 +46,76 @@ final class VehicleRecorder {
 
     void start() {
         worker.post(new Runnable() {
-            @Override public void run() {
-                if (samples != null) return;
-                try {
-                    car = Car.createCar(context);
-                    if (car == null) throw new IllegalStateException();
-                    properties = (CarPropertyManager) car.getCarManager(Car.PROPERTY_SERVICE);
-                    if (properties == null) throw new IllegalStateException();
-                    if (gear() != VehicleGear.GEAR_PARK || Math.abs(speed().getValue()) > PARK_SPEED_LIMIT) {
-                        stop("P 상태에서 차량 기록을 시작해 주세요.");
-                        return;
-                    }
-                    samples = new JSONArray();
-                    moved = false;
-                    leftPark = false;
-                    start = SystemClock.elapsedRealtime();
-                    lastSample = -1;
-                    lastSpeedTimestamp = -1;
-                    firstSpeedTimestamp = -1;
-                    sawSignalGap = false;
-                    waitingForSignal = false;
-                    showRecordingStatus();
-                    tick.run();
-                } catch (SecurityException e) {
-                    stop("차속과 변속 위치를 읽을 권한을 확인하세요.");
-                } catch (RuntimeException e) {
-                    stop("차량 신호를 읽을 수 없습니다. 지원 차량과 권한을 확인하세요.");
-                }
-            }
+            @Override public void run() { connect(); }
         });
+    }
+
+    private void connect() {
+        if (car != null || samples != null) return;
+        try {
+            if (Build.VERSION.SDK_INT < 29) {
+                car = Car.createCar(context);
+                if (car == null) throw new IllegalStateException();
+                beginRecording(car);
+                return;
+            }
+            listener.status("차량 서비스 연결을 기다리는 중입니다.", true);
+            car = Car.createCar(context, worker, Car.CAR_WAIT_TIMEOUT_DO_NOT_WAIT,
+                    new Car.CarServiceLifecycleListener() {
+                        @Override public void onLifecycleChanged(final Car connection, final boolean ready) {
+                            worker.post(new Runnable() {
+                                @Override public void run() { onServiceState(connection, ready); }
+                            });
+                        }
+                    });
+            if (car == null) throw new IllegalStateException();
+            worker.postDelayed(connectionTimeout, 5000);
+        } catch (SecurityException e) {
+            stop("차속과 변속 위치를 읽을 권한을 확인하세요.");
+        } catch (RuntimeException e) {
+            stop("차량 신호를 읽을 수 없습니다. 지원 차량과 권한을 확인하세요.");
+        }
+    }
+
+    private void onServiceState(Car connection, boolean ready) {
+        if (connection != car) return;
+        if (ready && samples == null) beginRecording(connection);
+        else if (!ready && properties != null) {
+            stop("차량 서비스 연결이 끊겼습니다. 이전 저장 기록은 유지됩니다.");
+        }
+    }
+
+    private final Runnable connectionTimeout = new Runnable() {
+        @Override public void run() {
+            if (samples == null) stop("차량 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        }
+    };
+
+    private void beginRecording(Car connection) {
+        worker.removeCallbacks(connectionTimeout);
+        try {
+            properties = (CarPropertyManager) connection.getCarManager(Car.PROPERTY_SERVICE);
+            if (properties == null) throw new IllegalStateException();
+            if (gear() != VehicleGear.GEAR_PARK || Math.abs(speed().getValue()) > PARK_SPEED_LIMIT) {
+                stop("P 상태에서 차량 기록을 시작해 주세요.");
+                return;
+            }
+            samples = new JSONArray();
+            moved = false;
+            leftPark = false;
+            start = SystemClock.elapsedRealtime();
+            lastSample = -1;
+            lastSpeedTimestamp = -1;
+            firstSpeedTimestamp = -1;
+            sawSignalGap = false;
+            waitingForSignal = false;
+            showRecordingStatus();
+            tick.run();
+        } catch (SecurityException e) {
+            stop("차속과 변속 위치를 읽을 권한을 확인하세요.");
+        } catch (RuntimeException e) {
+            stop("차량 신호를 읽을 수 없습니다. 지원 차량과 권한을 확인하세요.");
+        }
     }
 
     private int gear() {
@@ -231,6 +273,7 @@ final class VehicleRecorder {
     private void disconnect() {
         samples = null;
         worker.removeCallbacks(tick);
+        worker.removeCallbacks(connectionTimeout);
         Car connection = car;
         car = null;
         properties = null;
