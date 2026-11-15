@@ -54,6 +54,31 @@ function demoFile(name) {
   return fs.readFileSync(path.join(__dirname, '../demo', name + '.csv'), 'utf8');
 }
 
+function longDemo(name){
+  const [header,...samples]=demoFile(name).trim().split(/\r?\n/);
+  const offset=Number(samples.at(-1).split(',')[0]);
+  const second=samples.slice(1).map(line=>{
+    const [time,...values]=line.split(',');
+    return [Number(time)+offset,...values].join(',');
+  });
+  return [header,...samples,...second].join('\n');
+}
+
+test('short replay shows counts and the related brake card without a normalized rate',()=>{
+  const app=start();
+  app.go('vehicle');
+  app.node('#speed-replay').onclick();
+  const html=app.node('#content').innerHTML;
+  assert.match(html,/급감속<\/h3><strong>3회/);
+  assert.match(html,/40초/);
+  assert.match(html,/data-trip-part="브레이크"/);
+  assert.doesNotMatch(html,/회 \/ 100km/);
+  app.go('progress');
+  app.node('#improve').onclick();
+  assert.match(app.node('#content').innerHTML,/기준 5건 · 비교 3건/);
+  assert.doesNotMatch(app.node('#content').innerHTML,/class="big">[-+]?\d+%/);
+});
+
 test('first CSV needs a baseline and a pinned baseline survives import and restart', async () => {
   let app = start();
   await app.csv(demoFile('baseline'));
@@ -132,12 +157,12 @@ test('a completed vehicle callback is restored and never uses a CSV baseline', a
 
 test('real CSV comparison waits for route confirmation and resets after a new import', async () => {
   const app = start();
-  await app.csv(demoFile('baseline'));
+  await app.csv(longDemo('baseline'));
   app.go('progress');
   app.node('#baseline').onclick();
   assert.match(app.node('#content').innerHTML, /별도 기록을 분석하면/);
   app.go('overview');
-  await app.csv(demoFile('improved'));
+  await app.csv(longDemo('improved'));
   app.go('progress');
   const html = () => app.node('#content').innerHTML;
   assert.match(html(), /id="comparable-route"/);
@@ -148,7 +173,7 @@ test('real CSV comparison waits for route confirmation and resets after a new im
   checkbox.onchange();
   assert.match(html(), /class="big">-\d+%/);
   app.go('overview');
-  await app.csv(demoFile('baseline'));
+  await app.csv(longDemo('baseline'));
   app.go('progress');
   assert.doesNotMatch(html(), /class="big">[-+]?\d+%/);
 });
@@ -423,4 +448,19 @@ test('vehicle speed-only budget does not infer cornering, and replay is labelled
   app.node('#speed-replay').onclick();
   app.node('#open-budget').onclick();
   assert.match(app.node('#content').innerHTML,/가상 주행 예시/);
+});
+
+
+test('maintenance forecast lists unpriced inspection, dated quote and empty months separately',()=>{
+  const garage={model:'Tucson',year:2026,powertrain:'ice',usage:'normal',km:45000,monthlyKm:1000,
+    records:[{part:'브레이크',action:'교체',date:'2026-10-10',km:42000}],
+    rules:{브레이크:{intervalKm:10000,intervalMonths:0,inspectionKm:5000,inspectionMonths:0,low:335,high:394}}};
+  const app=start(new Map([['drive-health-garage-v1',JSON.stringify(garage)],
+    [budgetKey,JSON.stringify([{part:'브레이크',month:'2027-04',low:350,high:400}])]]));
+  app.go('budget');
+  const html=app.node('#content').innerHTML;
+  assert.match(html,/2027년 3월<\/th>[\s\S]*?브레이크 패드 점검<\/td>[\s\S]*?비용 미등록/);
+  assert.match(html,/2027년 4월<\/th>[\s\S]*?브레이크 패드 등록 견적<\/td>[\s\S]*?\$350\.00/);
+  assert.match(html,/현재 예측된 정비 없음/);
+  assert.doesNotMatch(html,/브레이크 패드 교체<\/td>/);
 });
