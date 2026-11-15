@@ -246,3 +246,5 @@ details summary { min-height: var(--target); padding: 14px 5px; color: var(--blu
 #part-budget ul { padding-left: 24px; }
 .forecast-table th, .forecast-table td { white-space: normal; }
 .forecast-table td:first-of-type { min-width: 155px; }
+
+.budget-period { min-width: 126px; }

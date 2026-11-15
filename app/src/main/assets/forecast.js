@@ -18,9 +18,9 @@ function calculateWear(inputs){
   return {remainingKm,improvedKm,annualWearShare,savingShare};
 }
 
-function forecastMonths(firstMonth,quotes,premium){
+function forecastMonths(firstMonth,quotes,premium,count=12){
   const [year,month]=firstMonth.split('-').map(Number);
-  return Array.from({length:12},(_,i)=>{
+  return Array.from({length:count},(_,i)=>{
     const d=new Date(year,month-1+i,1);
     const key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
     const planned=quotes.filter(quote=>quote.month===key);

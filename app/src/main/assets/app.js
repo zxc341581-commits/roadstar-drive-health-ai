@@ -208,12 +208,22 @@ function saveGarage(next,error){
   render();
 }
 
-function dueLabel(due,requiredRecord){
+function dueStatus(due,task){
+  const over=[];
+  if(due.overKm>0)over.push(due.overKm.toLocaleString('ko-KR')+' km 초과');
+  if(due.overDays>0)over.push(due.overDays.toLocaleString('ko-KR')+'일 경과');
+  return task+' 기준 '+(over.join(' · ')||'도달');
+}
+
+function dueLabel(due,requiredRecord,task){
   if(!due)return requiredRecord+' 이력과 '+usageLabels[garage.usage]+' 기준 필요';
   const mileage=due.dueKm===null?'':due.dueKm.toLocaleString('ko-KR')+' km';
-  const timing=[due.month?monthLabel(due.month):'',mileage].filter(Boolean).join(' · ');
-  if(due.overdue)return '기준 도달'+(timing?' · '+timing:'');
-  return timing||'예정 월 미정';
+  if(due.overdue)return `<span class="warn">${dueStatus(due,task)}</span>${mileage?' · 거리 기준 '+mileage:''}`;
+  return [due.month?monthLabel(due.month):'',mileage].filter(Boolean).join(' · ')||'예정 월 미정';
+}
+
+function serviceNotice({part,task,due}){
+  return partName(part)+' '+(due.overdue?dueStatus(due,task):task+' 기준 · '+monthLabel(due.month));
 }
 
 const primaryParts=['엔진오일','브레이크','타이어'];
@@ -231,7 +241,9 @@ function partDashboard(r){
     const reached=dates.some(due=>due.overdue);
     const soon=dates.some(due=>due.month&&due.month<=nextMonth);
     const priority=reached?0:soon?1:dates.length?2:3;
-    const status=['기준 도달','다음 달까지 예정','기준 등록됨','정보 필요'][priority];
+    const status=reached
+      ?dueStatus(inspection?.overdue?inspection:replacement,inspection?.overdue?'점검':'교체')
+      :['','다음 달까지 예정','기준 등록됨','정보 필요'][priority];
     return {name,inspection,replacement,priority,status};
   }).sort((a,b)=>a.priority-b.priority);
   const current=schedules.find(item=>item.name===part);
@@ -252,8 +264,8 @@ function partDashboard(r){
     <p class="pill inline-pill">${evidence}</p><p>${spec.habit}</p>
     <p><strong>점검 항목</strong> ${spec.check}</p><p><strong>추천 행동</strong> ${spec.coach}</p>
     <dl class="info-list"><div><dt>최근 정비</dt><dd>${latest?`${latest.date} · ${latest.action} · ${latest.km.toLocaleString('ko-KR')} km`:'미등록'}</dd></div>
-    <div><dt>다음 점검</dt><dd>${dueLabel(current.inspection,'점검·교체')}</dd></div>
-    <div><dt>예상 교체</dt><dd>${dueLabel(current.replacement,'교체')}</dd></div>
+    <div><dt>다음 점검</dt><dd>${dueLabel(current.inspection,'점검·교체','점검')}</dd></div>
+    <div><dt>예상 교체</dt><dd>${dueLabel(current.replacement,'교체','교체')}</dd></div>
     <div><dt>예상 정비비</dt><dd>${knownPrice?estimateRange([knownPrice]):'미입력'} ${knownPrice&&rule?.low==null?'(미국 참고가)':''}</dd></div></dl>
     <button type="button" id="parts-to-budget" class="button primary">${partName(part)} 예산 보기</button></article>
     <article class="card"><h2>차량별 정비 기준</h2><p class="pill inline-pill">${usageLabels[garage.usage]}</p>
@@ -291,9 +303,10 @@ function servicePlan(month){
     if(within(inspection?.month)&&(!replacementMonth||inspection.month<replacementMonth)){
       items.push({part,month:inspection.month,low:null,high:null,task:'점검'});
     }
-    if(replacement?.month&&replacement.month<month)near.push({part,task:'교체 기준',due:replacement});
-    if(inspection?.month&&inspection.month<month&&(!replacement?.month||inspection.month<replacement.month)){
-      near.push({part,task:'점검 기준',due:inspection});
+    if(replacement?.month&&replacement.month<month)near.push({part,task:'교체',due:replacement});
+    if(inspection?.month&&inspection.month<month&&
+      (inspection.overdue||!replacement?.month||inspection.month<replacement.month)){
+      near.push({part,task:'점검',due:inspection});
     }
   }
   return {items,near};
@@ -425,10 +438,10 @@ function progress(r){
   const panels=TYPES.slice(0,speedOnly()?1:2).map(t=>{
     const baselineCount=state.base&&!olderBaseline&&!differentClock?count(state.base,t.id):null;
     const tripCount=count(r,t.id);
-    const a=baselineCount===null?null:rate(baselineCount,state.base.km);
-    const b=rate(tripCount,r.km);
     const rawCounts=baselineCount===null?'비교 '+tripCount+'건':'기준 '+baselineCount+'건 · 비교 '+tripCount+'건';
     if(!qualified)return `<article class="card"><h2>${t.label} 횟수</h2><p>${rawCounts}</p><p class="subtle">두 기록 모두 유효 주행 ${minRateKm} km 이상이고 누락이 없을 때 거리당 빈도를 표시합니다.</p></article>`;
+    const a=baselineCount===null?null:rate(baselineCount,state.base.km);
+    const b=rate(tripCount,r.km);
     const zeroNote=showChange&&a===0?'<p>기준 0건이라 변화율을 계산할 수 없습니다.</p>':'';
     const max=Math.max(1,a||0,b||0);
     const change=showChange&&a>0&&b!==null?(b-a)/a*100:null;
@@ -475,7 +488,8 @@ const wearFields=[
   ['monthlyKm','예상 월 주행거리 (km)','1',1],
   ['improvement','습관 개선 후 마모율 감소 가정 (%)','1',0,99]
 ];
-let forecast={part:'브레이크',parts:{},premium:null};
+const budgetPeriods=[1,3,6,12];
+let forecast={part:'브레이크',parts:{},premium:null,months:3};
 try{
   const saved=JSON.parse(localStorage.getItem(forecastKey)||'null');
   if(saved&&typeof saved==='object'){
@@ -486,13 +500,17 @@ try{
       }catch{}
     }
     if(quoteParts.slice(0,2).includes(saved.part))forecast.part=saved.part;
+    if(budgetPeriods.includes(saved.months))forecast.months=saved.months;
     if(Number.isFinite(saved.premium)&&saved.premium>=0&&saved.premium<=100000)forecast.premium=saved.premium;
   }
 }catch{}
 
 function ownershipForecast(month,items){
-  const known=items.filter(priced);
-  const months=forecastMonths(month,known,forecast.premium);
+  const months=forecastMonths(month,items.filter(priced),forecast.premium,forecast.months);
+  const first=months[0].month,last=months[months.length-1].month;
+  const known=items.filter(item=>priced(item)&&item.month>=first&&item.month<=last);
+  const options=budgetPeriods.map(count=>`<option value="${count}"${count===forecast.months?' selected':''}>${count}개월</option>`).join('');
+  const rangeLabel=first===last?monthLabel(first):monthLabel(first)+' ~ '+monthLabel(last);
   const insurance=forecast.premium===null?null:Math.round(forecast.premium*100)*months.length/100;
   const totalItems=insurance===null?known:[...known,{low:insurance,high:insurance}];
   const rows=months.map(entry=>{
@@ -508,7 +526,10 @@ function ownershipForecast(month,items){
       <td>${range}${hasPrice&&missing?' · 미등록 비용 별도':''}</td>
       <td>${insurance===null?'미입력':usd(entry.premium)}</td><td>${combined}</td></tr>`;
   }).join('');
-  return `<article class="card budget-section" id="annual-plan"><h2>12개월 정비 일정과 지출</h2>
+  return `<article class="card budget-section" id="annual-plan">
+    <div class="section-heading"><div><h2>정비 일정과 지출</h2><p class="subtle">${rangeLabel}</p></div>
+    <label class="field budget-period">예산 기간<select id="budget-period">${options}</select></label></div>
+    <p id="period-error" class="warn" role="status"></p>
     <p>${garage.monthlyKm===null?'예상 월 주행거리 미등록 · 기간 기준과 등록 견적을 반영합니다.':
       '예상 월 주행거리 '+garage.monthlyKm.toLocaleString('ko-KR')+' km · 점검·교체 기준과 등록 견적을 반영합니다.'}</p>
     <form id="insurance-form" class="forecast-form">
@@ -517,7 +538,7 @@ function ownershipForecast(month,items){
       <p id="insurance-error" class="warn" role="status"></p>
     </form>
     <p class="subtle">등록 견적이 있으면 날짜와 비용을 우선 적용합니다. 비용이 미등록된 일정은 표에 표시하고 합계에서는 제외합니다.</p>
-    <div class="forecast-total"><span>12개월 확인된 비용 합계${insurance===null?' · 보험료 미입력':''}</span>
+    <div class="forecast-total"><span>${forecast.months}개월 확인된 비용 합계${insurance===null?' · 보험료 미입력':''}</span>
     <strong class="big">${totalItems.length?estimateRange(totalItems):'—'}</strong></div>
     <details open><summary>월별 정비 일정과 비용</summary><div class="forecast-table" tabindex="0" role="region" aria-label="월별 정비 일정과 비용">
     <table><thead><tr><th scope="col">예정 월</th><th scope="col">정비 일정</th><th scope="col">정비비</th><th scope="col">보험료</th><th scope="col">확인된 합계</th></tr></thead><tbody>${rows}</tbody></table>
@@ -592,7 +613,7 @@ function budget(r){
     .map(p=>`<option value="${p}"${p===part?' selected':''}>${partName(p)}</option>`).join('');
   const selectedMonth=quote?(validMonth(quote.month)?quote.month:''):planned?.month??month;
   const focus=budgetPart?`<article class="card budget-section" id="part-budget"><h2>${partName(budgetPart)} 정비 준비</h2>
-    ${pending.length?`<p class="warn">${pending.map(item=>item.task+' 확인 필요').join(' · ')}</p>`:''}
+    ${pending.length?`<p class="warn">${pending.map(serviceNotice).join(' · ')}</p>`:''}
     ${planItems.length?`<ul>${planItems.map(item=>`<li>${monthLabel(item.month)} · ${plannedName(item)} · ${priced(item)?estimateRange([item]):'비용 미등록'}</li>`).join('')}</ul>`
       :'<p>등록한 정비 이력과 기준 또는 예정 월이 있는 견적이 필요합니다.</p>'}
     <button type="button" class="button primary" id="jump-quote">이 부품의 견적 입력</button></article>`:'';
@@ -618,12 +639,12 @@ function budget(r){
     <h2>다음 달 예상 지출</h2><p>${monthlyDetail}</p>
     ${next.length?`<p>${next.map(plannedName).join(' · ')}</p>`:''}
     ${next.some(item=>!priced(item))?'<p class="subtle">비용 미등록 일정은 합계에서 제외</p>':''}
-    <button class="button" type="button" id="jump-annual">12개월 정비 일정 보기</button>
+    <button class="button" type="button" id="jump-annual">예산 기간 선택 · 일정 보기</button>
     <dl class="info-list"><div><dt>예상 정비비</dt><dd>${monthItems.length?estimateRange(monthItems):'—'}</dd></div>
     <div><dt>월 보험료</dt><dd>${premium===null?'미입력':usd(premium)}</dd></div></dl></div>
     <strong class="big">${totalItems.length?estimateRange(totalItems):'—'}</strong></article>
     ${focus}
-    ${plan.near.length?`<article class="card budget-section"><h2>먼저 확인할 정비</h2><p>${plan.near.map(item=>partName(item.part)+' '+item.task+' · '+(item.due.overdue?'도달':monthLabel(item.due.month))).join(' / ')}</p></article>`:''}
+    ${plan.near.length?`<article class="card budget-section"><h2>먼저 확인할 정비</h2><p>${plan.near.map(serviceNotice).join(' / ')}</p></article>`:''}
     ${ownershipForecast(month,plan.items)}
     <section class="budget-section" aria-labelledby="care-title"><div class="section-heading">
     <h2 id="care-title">주행습관으로 확인할 부품</h2><span class="pill">${source}</span></div>
@@ -839,7 +860,20 @@ function render(){
     document.querySelector('#improve').onclick=()=>{importRequest++;comparableRoute=false;baselineIsCurrent=false;Object.assign(state,{rows:demo(true),base:analyze(demo()),basePinned:false,demonstration:true,vehicleSource:'',improved:true,error:''});render();};
   }
   if(state.page==='budget'){
-    document.querySelector('#jump-annual').onclick=()=>document.querySelector('#annual-plan').scrollIntoView?.({block:'start'});
+    document.querySelector('#jump-annual').onclick=()=>{
+      document.querySelector('#annual-plan').scrollIntoView?.({block:'start'});
+      document.querySelector('#budget-period').focus?.({preventScroll:true});
+    };
+    document.querySelector('#budget-period').onchange=event=>{
+      const months=Number(event.target.value);
+      if(!budgetPeriods.includes(months)||months===forecast.months)return;
+      const premiumInput='#insurance-form [name="premium"]';
+      const draft=document.querySelector(premiumInput).value;
+      storeForecast({...forecast,months},'#period-error');
+      document.querySelector('#budget-period').value=String(forecast.months);
+      document.querySelector(premiumInput).value=draft;
+      document.querySelector('#budget-period').focus?.({preventScroll:true});
+    };
     if(budgetPart)document.querySelector('#jump-quote').onclick=()=>{
       document.querySelector('#estimate').scrollIntoView?.({block:'start'});
       document.querySelector('#low').focus?.({preventScroll:true});

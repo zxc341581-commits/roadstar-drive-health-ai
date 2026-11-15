@@ -456,11 +456,36 @@ test('maintenance forecast lists unpriced inspection, dated quote and empty mont
     records:[{part:'브레이크',action:'교체',date:'2026-10-10',km:42000}],
     rules:{브레이크:{intervalKm:10000,intervalMonths:0,inspectionKm:5000,inspectionMonths:0,low:335,high:394}}};
   const app=start(new Map([['drive-health-garage-v1',JSON.stringify(garage)],
-    [budgetKey,JSON.stringify([{part:'브레이크',month:'2027-04',low:350,high:400}])]]));
+    [budgetKey,JSON.stringify([{part:'브레이크',month:'2027-04',low:350,high:400}])],
+    ['drive-health-forecast-v1',JSON.stringify({months:12})]]));
   app.go('budget');
   const html=app.node('#content').innerHTML;
   assert.match(html,/2027년 3월<\/th>[\s\S]*?브레이크 패드 점검<\/td>[\s\S]*?비용 미등록/);
   assert.match(html,/2027년 4월<\/th>[\s\S]*?브레이크 패드 등록 견적<\/td>[\s\S]*?\$350\.00/);
   assert.match(html,/현재 예측된 정비 없음/);
   assert.doesNotMatch(html,/브레이크 패드 교체<\/td>/);
+});
+
+
+test('budget periods affect the visible months and subtotal, persist, and preserve next month',()=>{
+  const quotes=[
+    {part:'엔진오일',month:'2027-01',low:85,high:110},
+    {part:'타이어',month:'2027-04',low:400,high:600}
+  ];
+  const storage=new Map([[budgetKey,JSON.stringify(quotes)],['drive-health-forecast-v1',JSON.stringify({premium:150})]]);
+  let app=start(storage);
+  app.go('budget');
+  const view=()=>app.node('#content').innerHTML;
+  assert.match(view(),/3개월 확인된 비용 합계[\s\S]*?\$535\.00.*\$560\.00/);
+  assert.doesNotMatch(view(),/2027년 4월<\/th>/);
+  for(const [months,low,high] of [[1,'235','260'],[6,'1,385','1,610'],[12,'2,285','2,510']]){
+    app.node('#budget-period').onchange({target:{value:String(months)}});
+    assert.match(view(),new RegExp(months+'개월 확인된 비용 합계'));
+    assert.ok(view().includes('$'+low+'.00 – $'+high+'.00'));
+    assert.match(view().split('</article>')[0],/\$235\.00.*\$260\.00/);
+  }
+  assert.equal(JSON.parse(storage.get('drive-health-forecast-v1')).months,12);
+  app=start(storage);
+  app.go('budget');
+  assert.match(view(),/12개월 확인된 비용 합계/);
 });

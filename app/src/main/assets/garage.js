@@ -52,15 +52,19 @@ function serviceSchedule(profile,records,part,intervalKm,intervalMonths,includeI
   today=new Date(today.getFullYear(),today.getMonth(),today.getDate(),12);
   const candidates=[];
   const dueKm=intervalKm>0?last.km+intervalKm:null;
-  if(intervalMonths>0)candidates.push(addCalendarMonths(new Date(last.date+'T12:00:00'),intervalMonths));
-  if(dueKm!==null&&profile.km!==null){
-    const remaining=dueKm-profile.km;
+  const dueDate=intervalMonths>0?addCalendarMonths(new Date(last.date+'T12:00:00'),intervalMonths):null;
+  const remaining=dueKm!==null&&Number.isFinite(profile.km)?dueKm-profile.km:null;
+  if(dueDate)candidates.push(dueDate);
+  if(remaining!==null){
     if(remaining<=0)candidates.push(today);
     else if(profile.monthlyKm>0)candidates.push(new Date(today.getFullYear(),today.getMonth(),today.getDate()+Math.ceil(remaining/profile.monthlyKm*30.4375),12));
   }
   const due=candidates.sort((a,b)=>a-b)[0]??null;
   const key=due?due.getFullYear()+'-'+String(due.getMonth()+1).padStart(2,'0'):null;
-  return {dueKm,month:key,overdue:Boolean(due&&due<=today)||Boolean(dueKm!==null&&profile.km!==null&&dueKm<=profile.km)};
+  const calendarDay=date=>Date.UTC(date.getFullYear(),date.getMonth(),date.getDate())/86400000;
+  const overDays=dueDate?Math.max(0,calendarDay(today)-calendarDay(dueDate)):0;
+  const overKm=remaining===null?0:Math.max(0,-remaining);
+  return {dueKm,month:key,overdue:Boolean(due&&due<=today),overKm,overDays};
 }
 
 if(typeof module!=='undefined')module.exports={serviceParts,tripContext,addCalendarMonths,serviceDue,inspectionDue,serviceRules};

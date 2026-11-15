@@ -15,9 +15,9 @@ test('service due uses the latest replacement and the earlier mileage or calenda
   const profile={km:59000,monthlyKm:1000,rules:{타이어:{intervalKm:10000,intervalMonths:8}}};
   const entries=[{part:'타이어',action:'교체',date:'2025-07-31',km:50000},
     {part:'타이어',action:'점검',date:'2026-01-01',km:58500}];
-  assert.deepEqual(serviceDue(profile,entries,'타이어',day),{dueKm:60000,month:'2026-03',overdue:false});
+  assert.deepEqual(serviceDue(profile,entries,'타이어',day),{dueKm:60000,month:'2026-03',overdue:false,overKm:0,overDays:0});
   profile.rules.타이어.intervalMonths=1;
-  assert.deepEqual(serviceDue(profile,entries,'타이어',day),{dueKm:60000,month:'2025-08',overdue:true});
+  assert.deepEqual(serviceDue(profile,entries,'타이어',day),{dueKm:60000,month:'2025-08',overdue:true,overKm:0,overDays:153});
   assert.equal(serviceDue(profile,entries,'브레이크',day),null);
 });
 
@@ -39,9 +39,23 @@ test('inspection and replacement use their own intervals and a deadline applies 
     {part:'타이어',action:'점검',date:'2025-10-31',km:47000},
     {part:'타이어',action:'정비',date:'2026-01-25',km:48000},
   ];
-  assert.deepEqual(inspectionDue(profile,entries,'타이어',today),{dueKm:52000,month:'2026-01',overdue:true});
-  assert.deepEqual(serviceDue(profile,entries,'타이어',today),{dueKm:58000,month:'2026-11',overdue:false});
+  assert.deepEqual(inspectionDue(profile,entries,'타이어',today),{dueKm:52000,month:'2026-01',overdue:true,overKm:0,overDays:0});
+  assert.deepEqual(serviceDue(profile,entries,'타이어',today),{dueKm:58000,month:'2026-11',overdue:false,overKm:0,overDays:0});
   delete profile.rules.타이어.inspectionMonths;
   delete profile.rules.타이어.inspectionKm;
   assert.equal(inspectionDue(profile,entries,'타이어',today),null);
+});
+
+
+test('engine oil inspection is 500 km overdue while replacement remains upcoming',()=>{
+  const today=new Date(2026,10,15,7);
+  const profile={km:45000,monthlyKm:1000,rules:{엔진오일:{intervalKm:6000,intervalMonths:2,inspectionKm:2500}}};
+  const records=[{part:'엔진오일',action:'교체',date:'2026-10-05',km:42000}];
+  const inspection=inspectionDue(profile,records,'엔진오일',today);
+  assert.deepEqual(inspection,{dueKm:44500,month:'2026-11',overdue:true,overKm:500,overDays:0});
+  const replacement=serviceDue(profile,records,'엔진오일',today);
+  assert.deepEqual(replacement,{dueKm:48000,month:'2026-12',overdue:false,overKm:0,overDays:0});
+  const exact=inspectionDue({...profile,km:44500},records,'엔진오일',today);
+  assert.equal(exact.overdue,true);
+  assert.equal(exact.overKm,0);
 });
