@@ -13,6 +13,7 @@ const budgetKey = 'drive-health-budget';
 function start(storage = new Map()) {
   const nodes = new Map();
   const editButton={dataset:{edit:'0'}};
+  const brakeReference={dataset:{reference:'브레이크'}};
   const nav = ['overview', 'vehicle', 'parts', 'progress', 'budget'].map(page => {
     return {dataset: {page}, classList: { toggle() {} }, setAttribute() {}};
   });
@@ -22,7 +23,10 @@ function start(storage = new Map()) {
   }
   const context = vm.createContext({
     DriveEngine: engine,
-    document: {querySelector: node, querySelectorAll: selector => selector === 'nav button' ? nav : selector === '[data-edit]' ? [editButton] : []},
+    Date: class extends Date {
+      constructor(...args) { super(...(args.length ? args : [2026, 11, 31])); }
+    },
+    document: {querySelector: node, querySelectorAll: selector => selector === 'nav button' ? nav : selector === '[data-edit]' ? [editButton] : selector === '[data-reference]' ? [brakeReference] : []},
     localStorage: {
       getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
@@ -33,11 +37,11 @@ function start(storage = new Map()) {
   });
   vm.runInContext(script, context);
   return {
-    context, node, storage, editFirst: () => editButton.onclick(),
+    context, node, storage, editFirst: () => editButton.onclick(), useBrakeReference: () => brakeReference.onclick(),
     go: page => nav.find(button => button.dataset.page === page).onclick(),
     csv: text => node('#file').onchange({ target: { files: [{size: text.length, text: () => text}] } }),
-    submit: (low, high) => node('#estimate').onsubmit({
-      preventDefault() {}, target: { part: '브레이크', low, high }
+    submit: (low, high, month) => node('#estimate').onsubmit({
+      preventDefault() {}, target: { part: '브레이크', low, high, month }
     })
   };
 }
@@ -372,4 +376,47 @@ test('version 2 records migrate together and one malformed compact trip does not
   app.storage.set(tripKey,JSON.stringify(migrated));
   app=start(app.storage);
   assert.equal(app.node('#source').textContent,'가져온 CSV');
+});
+
+test('next-month budget rolls into January and excludes undated or other-month quotes', () => {
+  const app = start(new Map([[budgetKey, JSON.stringify([{part:'브레이크',low:99,high:100}])]]));
+  app.go('budget');
+  app.submit('10', '15', '2026-12');
+  app.submit('20', '25', '2027-01');
+  app.submit('50', '60', '2027-02');
+  const summary=app.node('#content').innerHTML.split('</article>')[0];
+  assert.match(summary, /2027년 1월/);
+  assert.match(summary, /\$20\.00.*\$25\.00/);
+  assert.match(app.node('#content').innerHTML, /일정 미정/);
+});
+
+test('a cost reference is counted only after the driver saves it for a month', () => {
+  let app=start();
+  app.go('budget');
+  app.useBrakeReference();
+  assert.equal(app.storage.has(budgetKey),false);
+  app.submit('335','394','2027-13');
+  assert.match(app.node('#form-error').textContent,/정비 예정 월/);
+  assert.equal(app.storage.has(budgetKey),false);
+  app.submit('335','394','2027-01');
+  assert.equal(JSON.parse(app.storage.get(budgetKey))[0].reference,true);
+  app=start(app.storage);
+  app.go('budget');
+  assert.match(app.node('#content').innerHTML.split('</article>')[0], /참고가 1건/);
+  app.editFirst();
+  app.submit('350','400','2027-01');
+  assert.equal(JSON.parse(app.storage.get(budgetKey))[0].reference,undefined);
+  assert.match(app.node('#content').innerHTML.split('</article>')[0], /직접 입력 1건/);
+});
+
+test('vehicle speed-only budget does not infer cornering, and replay is labelled', () => {
+  const app=start();
+  app.context.window.acceptVehicleTrip(engine.speedReplay());
+  app.node('#open-budget').onclick();
+  assert.match(app.node('#content').innerHTML,/횡가속도 미수집/);
+  assert.match(app.node('#content').innerHTML,/차량 차속 기록/);
+  app.go('vehicle');
+  app.node('#speed-replay').onclick();
+  app.node('#open-budget').onclick();
+  assert.match(app.node('#content').innerHTML,/가상 주행 예시/);
 });

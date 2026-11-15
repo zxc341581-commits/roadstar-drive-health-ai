@@ -28,7 +28,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         view = new WebView(this);
-        view.setBackgroundColor(0xff0b111c);
+        view.setBackgroundColor(0xfff4f6f8);
         view.getSettings().setJavaScriptEnabled(true);
         view.getSettings().setDomStorageEnabled(true);
         view.getSettings().setAllowFileAccess(false);

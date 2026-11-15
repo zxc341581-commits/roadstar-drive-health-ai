@@ -101,10 +101,29 @@ function otherSavedKind(){
   return lastKind;
 }
 const speedOnly=()=>state.rows[0].lat===null;
-const quoteParts=['브레이크','타이어','정기정비'];
+const referenceCosts={
+  브레이크:{low:335,high:394,scope:'브레이크 패드 교체 · 세금·수수료 제외',source:'RepairPal · 2026년 9월'},
+  타이어:{low:400,high:1000,scope:'16–20인치 사계절 타이어 4개 · 제품가만',source:'Discount Tire · 개당 $100–$250'}
+};
+const quoteParts=[...Object.keys(referenceCosts),'정기정비'];
+const validMonth=value=>typeof value==='string'&&/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value);
 let budgets=[];
 let editingQuote=null;
-try{const saved=JSON.parse(localStorage.getItem('drive-health-budget')||'[]');if(Array.isArray(saved))budgets=saved.filter(x=>quoteParts.includes(x?.part)&&Number.isFinite(x.low)&&Number.isFinite(x.high)&&x.low>=0&&x.high>=x.low);}catch{}
+let referencePart=null;
+
+function nextCalendarMonth(){
+  const today=new Date();
+  const month=new Date(today.getFullYear(),today.getMonth()+1,1);
+  return month.getFullYear()+'-'+String(month.getMonth()+1).padStart(2,'0');
+}
+
+try{
+  const saved=JSON.parse(localStorage.getItem('drive-health-budget')||'[]');
+  if(Array.isArray(saved)){
+    budgets=saved.filter(q=>quoteParts.includes(q?.part)&&Number.isFinite(q.low)
+      &&Number.isFinite(q.high)&&q.low>=0&&q.high>=q.low);
+  }
+}catch{}
 const content=document.querySelector('#content');
 const fmt=(x,d=1)=>x===null?'—':x.toFixed(d);
 const usd=x=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(x);
@@ -133,7 +152,7 @@ function graph(rows,r){
 function overview(r){
   const alternative=otherSavedKind();
   const restoreLabel=alternative==='csv'?'최근 CSV':'최근 차량 기록';
-  const action=`<div class="actions">${!state.demonstration?'<button class="button" id="forget">최근 기록 삭제</button>':''}<button class="button" id="reset">예제 주행</button>${alternative?'<button class="button" id="restore">'+restoreLabel+'</button>':''}<button class="button primary" id="import">CSV 분석</button><input type="file" id="file" accept=".csv,text/csv" hidden></div>`;
+  const action=`<div class="actions">${!state.demonstration?'<button class="button" id="forget">최근 기록 삭제</button>':''}<button class="button" id="open-budget">부품 점검·예산</button><button class="button" id="reset">예제 주행</button>${alternative?'<button class="button" id="restore">'+restoreLabel+'</button>':''}<button class="button primary" id="import">CSV 분석</button><input type="file" id="file" accept=".csv,text/csv" hidden></div>`;
   const cards=[['분석 주행거리',fmt(r.km)+' km',r.missingSeconds>0?'수집된 구간만 계산':'시간과 차속으로 계산'],['급감속',count(r,'brake')+'건',fmt(rate(count(r,'brake'),r.km))+'건 / 100km'],['급코너링',speedOnly()?'—':count(r,'turn')+'건',speedOnly()?'횡가속도 신호 미수집':fmt(rate(count(r,'turn'),r.km))+'건 / 100km']].map(([t,v,d])=>`<div class="card metric"><h3>${t}</h3><strong>${v}</strong><p>${d}</p></div>`).join('');
   const events=r.events.slice(0,100).map(e=>`<div class="event"><strong>${TYPES.find(t=>t.id===e.type).label}</strong><span>${timer(e.t-state.rows[0].t)} · ${fmt(e.peak)} m/s²</span></div>`).join('');
   const duration=state.rows[state.rows.length-1].t-state.rows[0].t;
@@ -179,13 +198,80 @@ function progress(r){
   const storageError=state.error?'<span id="progress-error" role="status"></span> ':'';
   return title('습관 비교','비슷한 조건의 두 주행을 거리당 이벤트 수로 비교합니다.',action)+`${context}<p>${distances}</p><div class="split">${panels}</div><div class="note">${storageError}${state.basePinned?'기준 주행이 고정되어 있습니다. ':state.base?'':'비교할 기준 주행이 아직 없습니다. '}${state.demonstration?'시연 데이터입니다. 비교하려면 같은 유형의 기록을 두 번 분석하세요.':'기준과 비교 데이터의 노선·교통 조건은 사용자가 확인해야 합니다.'} ${repeatNote}${state.base&&(state.base.missingSeconds||r.missingSeconds)?'신호 누락이 있는 비교에서는 변화율을 표시하지 않습니다. ':''}${versionNote}${clockNote}비율 변화는 비용 절감액으로 환산하지 않습니다.</div>`;
 }
-function budget(){
+function estimateRange(items){
+  let low=0,high=0;
+  for(const quote of items){
+    low+=Math.round(quote.low*100);
+    high+=Math.round(quote.high*100);
+  }
+  return usd(low/100)+' – '+usd(high/100);
+}
+function monthLabel(month){
+  return validMonth(month)?month.slice(0,4)+'년 '+Number(month.slice(5))+'월':'일정 미정';
+}
+function careCard(part,events,signal,notice,check,action){
+  const reference=referenceCosts[part];
+  const amount=usd(reference.low)+' – '+usd(reference.high);
+  return `<article class="card care-card">
+    <div class="care-heading"><h3>${part}</h3><span class="signal ${events>0?'signal-detected':''}">${signal}</span></div>
+    <p>${notice}</p><p><strong>확인할 항목</strong> ${check}</p>
+    <div class="care-cost"><span class="subtle">교체 시 미국 참고가</span><strong>${amount}</strong>
+    <p class="subtle">${reference.scope} · ${reference.source}</p></div>
+    <button type="button" class="button" data-reference="${part}">${action}</button>
+  </article>`;
+}
+function budget(r){
+  const month=nextCalendarMonth();
+  const monthly=budgets.filter(q=>q.month===month);
+  const references=monthly.filter(q=>q.reference===true).length;
   const quote=editingQuote===null?null:budgets[editingQuote];
-  const options=quoteParts.map(part=>'<option'+(part===quote?.part?' selected':'')+'>'+part+'</option>').join('');
-  const lo=budgets.reduce((sum,quote)=>sum+Math.round(quote.low*100),0)/100;
-  const hi=budgets.reduce((sum,quote)=>sum+Math.round(quote.high*100),0)/100;
-  return title('정비 예산','정비 견적 범위를 직접 등록해 지출 계획을 세웁니다.')+`<div class="split"><article class="card"><h2>${quote?'견적 수정':'견적 입력'}</h2><form id="estimate"><label class="field">정비 항목<select name="part">${options}</select></label><label class="field">최소 견적 (USD)<input id="low" name="low" type="number" min="0" max="100000" step=".01" required placeholder="280" value="${quote?.low??''}"></label><label class="field">최대 견적 (USD)<input id="high" name="high" type="number" min="0" max="100000" step=".01" required placeholder="420" value="${quote?.high??''}"></label><div class="actions"><button class="button primary">${quote?'변경 저장':'예산에 추가'}</button>${quote?'<button class="button" type="button" id="cancel-edit">수정 취소</button>':''}</div><p id="form-error" class="warn" role="status"></p></form></article>
-  <article class="card"><h2>등록한 견적 합계</h2><strong class="big">${usd(lo)} – ${usd(hi)}</strong><div class="events">${budgets.map((b,i)=>`<div class="row quote-row"><span>${b.part}</span><b>${usd(b.low)} – ${usd(b.high)}</b><div class="actions"><button class="button" data-edit="${i}" aria-label="${b.part} 견적 수정">수정</button><button class="button" data-delete="${i}" aria-label="${b.part} 견적 삭제">삭제</button></div></div>`).join('')||'<p>등록한 정비 견적이 없습니다.</p>'}</div></article></div><div class="note">입력한 견적의 합산입니다. 차량에 필요한 정비 항목과 시기는 실제 점검 결과를 기준으로 판단하세요.</div>`;
+  const part=quote?.part??referencePart;
+  const filled=quote??referenceCosts[referencePart];
+  const options=quoteParts.map(p=>`<option${p===part?' selected':''}>${p}</option>`).join('');
+  const selectedMonth=quote?(validMonth(quote.month)?quote.month:''):month;
+  const braking=count(r,'brake');
+  const turns=speedOnly()?null:count(r,'turn');
+  const brakeNotice=braking
+    ?'급감속이 반복되면 마찰제동을 쓰는 상황에서 브레이크 패드에 부담이 커질 수 있습니다.'
+    :'이 기록에서 급감속 이벤트가 잡히지 않았습니다.';
+  const tireNotice=turns===null?'횡가속도 미수집 · 차속만으로 급코너링을 평가할 수 없습니다.'
+    :turns?'빠른 코너링이 반복되면 타이어가 고르게 닳지 않을 수 있습니다.'
+    :'이 기록에서 급코너링 이벤트가 잡히지 않았습니다.';
+  const source=state.demonstration?'가상 주행 예시':state.vehicleSource?'차량 차속 기록':'가져온 CSV 기록';
+  const monthlyDetail=monthly.length
+    ?`등록 ${monthly.length}건 · 직접 입력 ${monthly.length-references}건 · 참고가 ${references}건`
+    :'다음 달에 예정된 정비가 없습니다. 견적과 예정 월을 입력해 보세요.';
+  const rows=budgets.map((b,i)=>`<div class="row quote-row"><div><strong>${b.part}</strong>
+    <p class="subtle">${monthLabel(b.month)} · ${b.reference?'미국 참고가':'직접 입력'}</p></div>
+    <b>${estimateRange([b])}</b><div class="actions">
+    <button class="button" data-edit="${i}" aria-label="${b.part} 견적 수정">수정</button>
+    <button class="button" data-delete="${i}" aria-label="${b.part} 견적 삭제">삭제</button></div></div>`).join('');
+  return title('정비 예산','주행습관에서 확인할 부품을 찾고, 정비 견적 범위를 바탕으로 다음 달 지출을 계획하세요.')+
+    `<article class="card budget-summary"><div><span class="subtle">${monthLabel(month)}</span>
+    <h2>다음 달 예상 지출</h2><p>${monthlyDetail}</p></div>
+    <strong class="big">${monthly.length?estimateRange(monthly):'—'}</strong></article>
+    <section class="budget-section" aria-labelledby="care-title"><div class="section-heading">
+    <h2 id="care-title">주행습관으로 확인할 부품</h2><span class="pill">${source}</span></div>
+    <div class="split">
+    ${careCard('브레이크',braking,'급감속 '+braking+'건',brakeNotice,'패드 두께와 로터 상태. HEV·EV는 회생제동 비중에 따라 부담이 달라집니다.','브레이크 참고가 가져오기')}
+    ${careCard('타이어',turns,turns===null?'횡가속도 미수집':'급코너링 '+turns+'건',tireNotice,'공기압, 트레드 깊이와 편마모.','타이어 참고가 가져오기')}
+    </div><p class="subtle">주행 이벤트는 점검 단서입니다. 교체 여부와 시기는 차량 점검 결과를 기준으로 판단하세요. 참고가는 차종·규격과 지역에 따라 달라집니다.</p></section>
+    <div class="split budget-section"><article class="card"><h2>${quote?'견적 수정':'정비 계획 등록'}</h2>
+    <form id="estimate">
+      <label class="field">정비 항목<select name="part">${options}</select></label>
+      <label class="field">정비 예정 월<input id="plan-month" name="month" type="month" placeholder="YYYY-MM" value="${selectedMonth}"></label>
+      <div class="split quote-fields">
+        <label class="field">최소 견적 (USD)<input id="low" name="low" type="number" min="0" max="100000" step=".01" required value="${filled?.low??''}"></label>
+        <label class="field">최대 견적 (USD)<input id="high" name="high" type="number" min="0" max="100000" step=".01" required value="${filled?.high??''}"></label>
+      </div>
+      <p class="subtle">${referencePart?'참고가를 불러왔습니다. 정비소에서 견적을 받으면 금액을 바꿔 저장하세요.':'예정 월을 비워 두면 등록한 견적 목록에만 저장됩니다.'}</p>
+      <div class="actions"><button class="button primary">${quote?'변경 저장':'예산에 추가'}</button>
+      ${quote||referencePart?'<button class="button" type="button" id="cancel-edit">취소</button>':''}</div>
+      <p id="form-error" class="warn" role="status"></p>
+    </form></article>
+    <article class="card"><h2>등록한 견적 합계</h2>
+    <strong class="big">${budgets.length?estimateRange(budgets):'—'}</strong>
+    <div class="events">${rows||'<p>등록한 정비 견적이 없습니다.</p>'}</div></article></div>`;
 }
 function vehicle(){
   return title('차량 기록','차속과 변속 위치를 읽어 주차 후 주행 리포트를 엽니다.')+
@@ -237,6 +323,7 @@ function render(){
   }
   if(state.page==='overview'){
     document.querySelector('#error').textContent=state.error;
+    document.querySelector('#open-budget').onclick=()=>{state.page='budget';render();};
     const reset=()=>{
       importRequest++;
       comparableRoute=false;
@@ -313,6 +400,7 @@ function render(){
       catch{document.querySelector('#form-error').textContent='기기 저장소에 저장하지 못했습니다. 다시 시도해 주세요.';return;}
       budgets=next;
       editingQuote=null;
+      referencePart=null;
       render();
     };
     document.querySelector('#estimate').onsubmit=e=>{
@@ -331,15 +419,31 @@ function render(){
         return;
       }
       if(high<low){document.querySelector('#form-error').textContent='최대 견적은 최소 견적 이상이어야 합니다.';return;}
-      const quote={part,low,high};
+      const month=fields.get('month')??'';
+      if(month!==''&&!validMonth(month)){
+        document.querySelector('#form-error').textContent='정비 예정 월을 연도와 월 형식으로 입력해 주세요.';
+        return;
+      }
+      const reference=referenceCosts[part];
+      const prior=budgets[editingQuote];
+      const fromReference=(referencePart===part||(prior?.part===part&&prior.reference===true))
+        &&reference?.low===low&&reference?.high===high;
+      const quote={part,low,high,...(month?{month}:{}),...(fromReference?{reference:true}:{})};
       const next=editingQuote===null?[...budgets,quote]
         :budgets.map((previous,index)=>index===editingQuote?quote:previous);
       commit(next);
     };
     const cancel=document.querySelector('#cancel-edit');
-    if(cancel)cancel.onclick=()=>{editingQuote=null;render();};
+    if(cancel)cancel.onclick=()=>{editingQuote=null;referencePart=null;render();};
+    document.querySelectorAll('[data-reference]').forEach(button=>button.onclick=()=>{
+      editingQuote=null;
+      referencePart=button.dataset.reference;
+      render();
+      document.querySelector('#plan-month')?.focus?.();
+    });
     document.querySelectorAll('[data-edit]').forEach(button=>button.onclick=()=>{
       editingQuote=Number(button.dataset.edit);
+      referencePart=null;
       render();
       document.querySelector('#low')?.focus?.();
     });
@@ -348,5 +452,5 @@ function render(){
     });
   }
 }
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{if(!capture.busy){editingQuote=null;state.page=b.dataset.page;render();}});
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{if(!capture.busy){editingQuote=null;referencePart=null;state.page=b.dataset.page;render();}});
 render();
