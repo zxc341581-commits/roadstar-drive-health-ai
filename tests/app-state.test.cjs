@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const assets = path.join(__dirname, '../app/src/main/assets');
 const engine = require(path.join(assets, 'engine.js'));
 const forecast = require(path.join(assets, 'forecast.js'));
+const garage = require(path.join(assets, 'garage.js'));
 const script = fs.readFileSync(path.join(assets, 'app.js'), 'utf8');
 const tripKey = 'drive-health-trip-v1';
 const budgetKey = 'drive-health-budget';
@@ -25,6 +26,7 @@ function start(storage = new Map()) {
   const context = vm.createContext({
     DriveEngine: engine,
     ...forecast,
+    ...garage,
     Date: class extends Date {
       constructor(...args) { super(...(args.length ? args : [2026, 11, 31])); }
     },

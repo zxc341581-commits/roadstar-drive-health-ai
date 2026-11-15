@@ -1,7 +1,7 @@
 'use strict';
 const {TYPES,parseCSV,analyze,hasGap,demo,rate,fromSpeedSamples,speedReplay}=DriveEngine;
-const names={vehicle:'차량 기록',overview:'주행 리포트',parts:'부품별 분석',progress:'습관 비교',budget:'정비 예산'};
-const state={page:'overview',rows:demo(),base:null,basePinned:false,demonstration:true,vehicleSource:'',improved:false,vehicle:'ice',error:''};
+const names={vehicle:'차량 데이터',overview:'AI 주행 분석',parts:'소모품 통합 관리',progress:'AI 운전 코칭',budget:'My Car Budget'};
+const state={page:'overview',rows:demo(),base:null,basePinned:false,demonstration:true,vehicleSource:'',improved:false,error:''};
 let capture={busy:false,message:'주차 상태에서 차량 기록을 시작하세요.'};
 const tripKey='drive-health-trip-v1';
 let trips={};
@@ -21,7 +21,7 @@ function storeTrip(){
   if(kind!=='csv'&&kind!=='vehicle') return;
   const trip={kind,rows:state.rows,base:state.base,basePinned:state.basePinned,baselineIsCurrent};
   const updated={...trips,[kind]:trip};
-  try{saveTrips(updated,kind);}
+  try{saveTrips(updated,kind);return true;}
   catch{state.error='이 기록을 저장하지 못했습니다. 이전에 저장한 기록은 유지되며 현재 분석 결과는 화면에서 볼 수 있습니다.';}
 }
 
@@ -33,7 +33,8 @@ function saveTrips(updated,active){
       if(row.gapBefore)sample.push(true);
       return sample;
     });
-    packed[kind]={...trip,rows,vehicleClock:trip.rows[0].vehicleClock===true};
+    const rpm=trip.rows.some(row=>Number.isFinite(row.rpm))?trip.rows.map(row=>row.rpm??null):null;
+    packed[kind]={...trip,rows,vehicleClock:trip.rows[0].vehicleClock===true,...(rpm?{rpm}:{})};
   }
   localStorage.setItem(tripKey,JSON.stringify({version:3,active,trips:packed}));
   trips=updated;
@@ -55,7 +56,7 @@ function acceptTrip(rows,kind){
   state.basePinned=Boolean(prior?.basePinned);
   Object.assign(state,{page:'overview',rows,improved:false,demonstration:kind==='replay',
     vehicleSource:kind==='vehicle'?'차량 차속 신호':kind==='replay'?'가상 차속 재생':'',error:''});
-  storeTrip();
+  if(storeTrip())trackTrip(rows,kind);
 }
 
 function validTrip(trip,kind){
@@ -73,6 +74,8 @@ function unpackTrip(trip){
     if(!Array.isArray(sample)||(sample.length!==4&&(sample.length!==5||sample[4]!==true)))return null;
     const [t,speed,long,lat,gapBefore]=sample;
     const row={t,speed,long,lat};
+    const rpm=Array.isArray(trip.rpm)?trip.rpm[index]:null;
+    if(Number.isFinite(rpm)&&rpm>=0&&rpm<=20000)row.rpm=rpm;
     if(gapBefore)row.gapBefore=true;
     if(index===0&&trip.kind==='vehicle'&&trip.vehicleClock===true)row.vehicleClock=true;
     return row;
@@ -105,7 +108,7 @@ const referenceCosts={
   브레이크:{low:335,high:394,scope:'브레이크 패드 교체 · 세금·수수료 제외',source:'RepairPal · 2026년 9월'},
   타이어:{low:400,high:1000,scope:'16–20인치 사계절 타이어 4개 · 제품가만',source:'Discount Tire · 개당 $100–$250'}
 };
-const quoteParts=[...Object.keys(referenceCosts),'정기정비'];
+const quoteParts=['브레이크','타이어',...Object.keys(serviceParts).filter(part=>!referenceCosts[part]),'정기정비'];
 const validMonth=value=>typeof value==='string'&&/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value);
 let budgets=[];
 let editingQuote=null;
@@ -130,6 +133,142 @@ const usd=x=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maxi
 const timer=t=>Math.floor(t/60)+':'+String(Math.floor(t%60)).padStart(2,'0');
 const count=(r,type)=>r.events.filter(e=>e.type===type).length;
 const title=(h,p,actions='')=>`<div class="title"><div><h1>${h}</h1><p>${p}</p></div>${actions}</div>`;
+const garageKey='drive-health-garage-v1';
+const historyKey='drive-health-trip-summary-v1';
+const powertrains={ice:'내연기관',hev:'하이브리드(PHEV 포함)',ev:'전기차'};
+const emptyGarage={model:'',year:null,km:null,monthlyKm:null,powertrain:'ice',rules:{},records:[]};
+const isDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)
+  &&Number.isFinite(Date.parse(value+'T00:00:00Z'))
+  &&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
+const intIn=(v,min,max)=>Number.isInteger(v)&&v>=min&&v<=max;
+const escapeText=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const knownPart=part=>Object.prototype.hasOwnProperty.call(serviceParts,part);
+let garage=emptyGarage;
+let tripHistory=[];
+let selectedPart='브레이크';
+
+try{
+  const saved=JSON.parse(localStorage.getItem(garageKey)||'null');
+  if(saved&&typeof saved.model==='string'&&Object.keys(powertrains).includes(saved.powertrain)){
+    const records=Array.isArray(saved.records)?saved.records.filter(r=>r&&knownPart(r.part)
+      &&['교체','점검','정비'].includes(r.action)&&isDate(r.date)&&intIn(r.km,0,9999999)):[];
+    const rules=Object.fromEntries(Object.entries(saved.rules??{}).filter(([part,rule])=>knownPart(part)&&rule
+      &&intIn(rule.intervalKm,0,1000000)&&intIn(rule.intervalMonths,0,240)
+      &&((rule.low===null&&rule.high===null)||(Number.isFinite(rule.low)&&Number.isFinite(rule.high)
+      &&rule.low>=0&&rule.high>=rule.low&&rule.high<=100000))));
+    garage={model:saved.model.slice(0,60),powertrain:saved.powertrain,records,rules,
+      year:intIn(saved.year,1900,2100)?saved.year:null,km:intIn(saved.km,0,9999999)?saved.km:null,
+      monthlyKm:intIn(saved.monthlyKm,1,99999)?saved.monthlyKm:null};
+  }
+}catch{}
+try{
+  const saved=JSON.parse(localStorage.getItem(historyKey)||'[]');
+  if(Array.isArray(saved))tripHistory=saved.filter(t=>t&&Number.isFinite(t.km)&&t.km>0
+    &&['csv','vehicle'].includes(t.kind)&&typeof t.fingerprint==='string').slice(0,12);
+}catch{}
+
+function trackTrip(rows,kind){
+  const summary=analyze(rows);
+  if(summary.km<=0)return;
+  const next=[{kind,km:summary.km,fingerprint:summary.fingerprint},
+    ...tripHistory.filter(t=>t.kind!==kind||t.fingerprint!==summary.fingerprint)].slice(0,12);
+  try{localStorage.setItem(historyKey,JSON.stringify(next));tripHistory=next;}
+  catch{}
+}
+
+function vehicleParts(){
+  return Object.keys(serviceParts).filter(part=>garage.powertrain!=='ev'||part!=='엔진오일');
+}
+function readAmount(form,key){
+  const value=String(form.get(key)??'').trim();
+  return value===''?null:/^\d+(?:\.\d{1,2})?$/.test(value)&&Number(value)<=100000?Number(value):NaN;
+}
+function readInteger(form,key){
+  const value=String(form.get(key)??'').trim();
+  return value===''?null:/^\d+$/.test(value)?Number(value):NaN;
+}
+function saveGarage(next,error){
+  try{localStorage.setItem(garageKey,JSON.stringify(next));}
+  catch{document.querySelector(error).textContent='기기에 저장하지 못했습니다.';return;}
+  garage=next;
+  render();
+}
+
+function dueLabel(part){
+  const due=serviceDue(garage,garage.records,part);
+  if(!due)return '교체일과 정비 기준을 등록하면 계산';
+  if(due.overdue)return '등록 기준 도달 · 점검 일정 확인';
+  const mileage=due.dueKm===null?'':due.dueKm.toLocaleString('ko-KR')+' km';
+  return [due.month?monthLabel(due.month):'',mileage].filter(Boolean).join(' · ')||'주행거리 또는 예정 월 미정';
+}
+
+function partDashboard(r){
+  const available=vehicleParts();
+  if(!available.includes(selectedPart))selectedPart=available[0];
+  const part=selectedPart, spec=serviceParts[part], rule=garage.rules[part];
+  const options=available.map(name=>`<button type="button" class="button ${name===part?'primary':''}" data-part-card="${name}" aria-pressed="${name===part}">${name==='브레이크'?'브레이크 패드':name==='배터리'?'12V 배터리':name}</button>`).join('');
+  const knownPrice=rule?.low!=null?{low:rule.low,high:rule.high}:referenceCosts[part];
+  const evidence=part==='브레이크'?'급감속 '+count(r,'brake')+'건'
+    :part==='타이어'?(speedOnly()?'횡가속도 미수집':'급코너링 '+count(r,'turn')+'건')
+    :part==='변속기 오일'?'급가속 '+count(r,'accel')+'건'
+    :r.km>0&&r.km<10?'이번 기록 10 km 미만':'개별 주행 기록 기준';
+  return title('소모품 통합 관리','차량 정보, 등록한 정비 기준과 주행 기록으로 점검 우선순위를 살펴보세요.')+
+    `<div class="actions part-tabs" aria-label="소모품 선택">${options}</div>
+    <div class="split budget-section"><article class="card"><h2>${part==='브레이크'?'브레이크 패드':part==='배터리'?'12V 배터리':part}</h2>
+    <p class="pill inline-pill">${evidence}</p><p>${spec.habit}</p>
+    <p><strong>점검 항목</strong> ${spec.check}</p><p><strong>추천 행동</strong> ${spec.coach}</p>
+    <dl class="info-list"><div><dt>예상 교체 기준</dt><dd>${dueLabel(part)}</dd></div>
+    <div><dt>예상 정비비</dt><dd>${knownPrice?estimateRange([knownPrice]):'미입력'} ${knownPrice&&rule?.low==null?'(미국 참고가)':''}</dd></div></dl>
+    <button type="button" id="parts-to-budget" class="button">My Car Budget 보기</button></article>
+    <article class="card"><h2>차량별 정비 기준</h2><p>제조사 매뉴얼이나 정비소의 교체 주기와 견적을 입력하세요. 주행거리와 기간이 모두 있으면 먼저 도달하는 기준을 사용합니다.</p>
+    <p class="subtle">변속기 오일은 차량에 해당하는 교체 항목인 경우 등록하세요. 12V 배터리는 구동용 배터리와 별도로 관리합니다.</p>
+    <form id="service-rule-form"><div class="split quote-fields">
+    <label class="field">교체 주기 (km)<input type="number" name="intervalKm" min="1" max="1000000" value="${rule?.intervalKm||''}"></label>
+    <label class="field">교체 주기 (개월)<input type="number" name="intervalMonths" min="1" max="240" value="${rule?.intervalMonths||''}"></label>
+    <label class="field">최소 교체비 (USD)<input type="number" name="low" min="0" max="100000" step=".01" value="${rule?.low??''}"></label>
+    <label class="field">최대 교체비 (USD)<input type="number" name="high" min="0" max="100000" step=".01" value="${rule?.high??''}"></label>
+    </div><button class="button primary">기준 저장</button><p id="rule-error" class="warn" role="status"></p></form></article></div>`;
+}
+function monthlyServiceProjections(month){
+  const end=addCalendarMonths(new Date(month+'-01T12:00:00'),12);
+  const endKey=end.getFullYear()+'-'+String(end.getMonth()+1).padStart(2,'0');
+  return vehicleParts().flatMap(part=>{
+    if(budgets.some(q=>q.part===part&&validMonth(q.month)&&q.month>=month&&q.month<endKey))return [];
+    const date=serviceDue(garage,garage.records,part);
+    const rule=garage.rules[part];
+    if(!date?.month||rule?.low==null)return [];
+    // A reached or current-month threshold is shown in parts, not shifted into the next-month budget.
+    if(date.month<month||date.month>=endKey)return [];
+    return [{part,month:date.month,low:rule.low,high:rule.high,projected:true}];
+  });
+}
+
+function dataPanels(){
+  const options=Object.entries(powertrains).map(([key,label])=>`<option value="${key}"${garage.powertrain===key?' selected':''}>${label}</option>`).join('');
+  const parts=vehicleParts().map(item=>`<option>${item}</option>`).join('');
+  const records=garage.records.map((record,i)=>({record,i})).sort((a,b)=>b.record.date.localeCompare(a.record.date))
+    .map(({record:r,i})=>`<div class="row quote-row"><div><strong>${r.part} · ${r.action}</strong>
+    <p class="subtle">${r.date} · ${r.km.toLocaleString('ko-KR')} km${Number.isFinite(r.cost)?' · '+usd(r.cost):''}</p>
+    ${r.memo?`<p>${escapeText(r.memo)}</p>`:''}</div><div class="actions"><button type="button" data-remove-service="${i}" class="button" aria-label="${r.part} 내역 삭제">삭제</button></div></div>`).join('');
+  return `<div class="split budget-section"><article class="card"><h2>차량 프로필</h2>
+    <form id="vehicle-profile-form"><label class="field">차량 모델<input name="model" maxlength="60" value="${escapeText(garage.model)}" required></label>
+    <div class="split quote-fields"><label class="field">연식<input type="number" name="year" min="1900" max="2100" value="${garage.year??''}" required></label>
+    <label class="field">파워트레인<select name="powertrain">${options}</select></label>
+    <label class="field">누적 주행거리 (km)<input type="number" name="km" min="0" max="9999999" value="${garage.km??''}" required></label>
+    <label class="field">예상 월 주행거리 (km)<input type="number" name="monthlyKm" min="1" max="99999" value="${garage.monthlyKm??''}"></label></div>
+    <button class="button primary">차량 정보 저장</button><p id="profile-error" class="warn" role="status"></p></form></article>
+    <article class="card"><h2>교체·정비 내역 등록</h2><form id="service-record-form">
+    <div class="split quote-fields"><label class="field">부품<select name="part">${parts}</select></label>
+    <label class="field">유형<select name="action"><option>교체</option><option>점검</option><option>정비</option></select></label>
+    <label class="field">정비일<input type="date" name="date" required></label>
+    <label class="field">정비 시 주행거리 (km)<input type="number" name="km" min="0" max="9999999" required></label></div>
+    <label class="field">실제 정비비 (USD)<input type="number" name="cost" min="0" max="100000" step=".01"></label>
+    <label class="field">정비 메모<input name="memo" maxlength="160"></label>
+    <button class="button primary">정비 내역 추가</button><p id="service-error" class="warn" role="status"></p>
+    </form></article></div>
+    <article class="card budget-section"><h2>정비 이력</h2><div class="events">${records||'<p>아직 등록한 정비 내역이 없습니다.</p>'}</div></article>`;
+}
+
 function graph(rows,r){
   const end=rows[rows.length-1].t-rows[0].t;
   const x=t=>36+(t-rows[0].t)/end*605;
@@ -149,6 +288,25 @@ function graph(rows,r){
   const markers=r.events.filter(e=>e.type==='brake').slice(0,300).map(e=>`<circle class="marker" cx="${x(e.t)}" cy="${y(e.speed)}" r="4.5"/>`).join('');
   return `<svg class="graph" viewBox="0 0 665 160" role="img" aria-label="차속 추세 및 급감속 발생 위치"><line class="axis" x1="36" y1="130" x2="641" y2="130"/><line class="axis" x1="36" y1="25" x2="641" y2="25"/><text x="2" y="29">${Math.round(max)}</text><text x="15" y="133">0</text>${trace}${markers}<text x="36" y="153">시작</text><text x="609" y="153">${timer(end)}</text></svg>`;
 }
+function coachingSummary(r){
+  if(count(r,'brake')>=2)return serviceParts.브레이크.coach;
+  if(!speedOnly()&&count(r,'turn')>=2)return serviceParts.타이어.coach;
+  if(count(r,'accel')>=2)return serviceParts['변속기 오일'].coach;
+  if(r.km>0&&r.km<10&&garage.powertrain!=='ev')return serviceParts.엔진오일.coach;
+  return '비슷한 노선의 주행을 더 기록해 운전습관 변화를 확인하세요.';
+}
+function drivingContext(r){
+  const signals=tripContext(state.rows,hasGap);
+  const short=tripHistory.filter(t=>t.km<10).length;
+  const share=tripHistory.length?Math.round(short/tripHistory.length*100):null;
+  return `<section class="card budget-section"><div class="section-heading"><h2>운전습관 요약</h2><span class="pill">규칙 기반 분석</span></div>
+    <p>${coachingSummary(r)}</p>
+    <dl class="info-list"><div><dt>급가속</dt><dd>${count(r,'accel')}건</dd></div>
+    <div><dt>단거리 / 장거리 비율</dt><dd>${share===null?'저장된 기록 없음':share+'% / '+(100-share)+'% · '+tripHistory.length+'건'}</dd></div>
+    <div><dt>공회전 추정</dt><dd>${signals.idleSeconds===null?'RPM 신호 미수집':timer(Math.round(signals.idleSeconds))}</dd></div>
+    <div><dt>평균 엔진 RPM</dt><dd>${signals.averageRpm===null?'미수집':Math.round(signals.averageRpm).toLocaleString('ko-KR')+' RPM'}</dd></div></dl>
+    <p class="subtle">단거리 기준은 10 km 미만입니다. 기기 수집과 가져오기에서 최근 저장한 기록 최대 12건을 사용합니다. RPM은 해당 열이 있는 CSV에서 계산합니다.</p></section>`;
+}
 function overview(r){
   const alternative=otherSavedKind();
   const restoreLabel=alternative==='csv'?'최근 CSV':'최근 차량 기록';
@@ -161,15 +319,10 @@ function overview(r){
   const coverage='<p class="subtle">분석 가능 시간 '+fmt(observedSeconds)+'초 / '+fmt(duration)+'초 · '+basis+'</p>';
   const gapNotice=r.missingSeconds>0
     ?'<div class="note">표본 간격이 길거나 신호가 누락·이상인 '+fmt(r.missingSeconds)+'초는 거리와 이벤트 계산에서 제외했습니다.</div>':'';
-  return title('주행 리포트','주행을 마친 뒤 주요 운전 이벤트를 확인하세요.',action)+
-    `<p id="error" class="warn" role="status"></p>${coverage}${gapNotice}<div class="metrics">${cards}</div><div class="columns"><article class="card"><h2>주행 속도</h2><p class="subtle">km/h · 주황색 점은 급감속 구간</p>${graph(state.rows,r)}</article><article class="card"><h2>감지한 이벤트</h2><div class="events">${events||'<p>감지된 이벤트가 없습니다.</p>'}</div></article></div><div class="note">급감속의 원인과 필요성은 이 데이터만으로 판별하기 어렵습니다.</div>`;
+  return title('AI 주행 분석','주행을 마친 뒤 기록과 운전습관 요약을 확인하세요.',action)+
+    `<p id="error" class="warn" role="status"></p>${coverage}${gapNotice}<div class="metrics">${cards}</div><div class="columns"><article class="card"><h2>주행 속도</h2><p class="subtle">km/h · 주황색 점은 급감속 구간</p>${graph(state.rows,r)}</article><article class="card"><h2>감지한 이벤트</h2><div class="events">${events||'<p>감지된 이벤트가 없습니다.</p>'}</div></article></div><div class="note">급감속의 원인과 필요성은 이 데이터만으로 판별하기 어렵습니다.</div>`+drivingContext(r);
 }
-function parts(r){
-  return title('부품별 부담 요인','운전 이벤트를 부품별로 해석하고 다음 주행 목표를 정합니다.',
-    `<label class="field">파워트레인<select id="vehicle"><option value="ice">내연기관</option><option value="electric">HEV·EV</option></select></label>`)+
-    `<div class="split"><article class="card"><span class="tag">브레이크</span><strong class="big">${count(r,'brake')}건</strong><h2>급감속 구간</h2><p>${state.vehicle==='electric'?'회생제동과 마찰제동 비중을 확인할 차량 신호가 필요합니다.':'반복 감속은 마찰제동 사용 시 브레이크 부담과 관련될 수 있습니다.'}</p><div class="note"><strong>다음 주행 목표</strong><br>가능한 상황에서 전방 흐름을 일찍 살피고 감속을 미리 시작해 보세요. 필요한 제동은 즉시 하세요.</div></article>
-    <article class="card"><span class="tag">타이어</span><strong class="big">${speedOnly()?'—':count(r,'turn')+'건'}</strong><h2>큰 횡가속 구간</h2><p>${speedOnly()?'차속만 읽은 기록입니다. 타이어 관련 횡가속도 분석에는 별도 입력이 필요합니다.':'타이어의 상태는 공기압, 노면, 정렬과 운전 조건에 영향을 받습니다.'}</p><div class="note"><strong>다음 주행 목표</strong><br>안전한 속도로 코너에 진입하고 조향을 부드럽게 이어가 보세요.</div></article></div><div class="note">이 리포트는 운전 이벤트 요약입니다. 부품 마모량과 교체일은 정비 점검으로 확인하세요.</div>`;
-}
+function parts(r){return partDashboard(r);}
 function progress(r){
   const action='<div class="actions"><button class="button" id="baseline">현재 기록을 기준으로 설정</button><button class="button primary" id="improve">개선 예제 비교</button></div>';
   const repeated=baselineIsCurrent||state.base?.fingerprint===r.fingerprint;
@@ -180,6 +333,12 @@ function progress(r){
   const showChange=canCompare&&(state.improved||comparableRoute);
   const context=canCompare&&!state.improved
     ?'<label><input id="comparable-route" type="checkbox" '+(comparableRoute?'checked':'')+'> 노선과 교통 조건이 비슷한 주행입니다</label>':'';
+  const previousTrips=tripHistory.slice(6,12);
+  const latestTrips=tripHistory.slice(0,6);
+  const shortTrips=entries=>entries.filter(entry=>entry.km<10).length;
+  const shortTrend=previousTrips.length>=3
+    ?`저장 기록의 단거리 주행 · 직전 ${shortTrips(previousTrips)}/${previousTrips.length}건 → 최근 ${shortTrips(latestTrips)}/${latestTrips.length}건`
+    :'이전 기록이 더 쌓이면 단거리 반복 주행 추세를 비교합니다.';
   const distances=state.base?'기준 '+fmt(state.base.km,2)+' km · 비교 '+fmt(r.km,2)+' km':'';
   const panels=TYPES.slice(0,speedOnly()?1:2).map(t=>{
     const baselineCount=state.base&&!olderBaseline&&!differentClock?count(state.base,t.id):null;
@@ -196,7 +355,9 @@ function progress(r){
   const versionNote=olderBaseline?'이전 계산 방식으로 저장한 기준입니다. 최신 기록을 새 기준으로 설정해 주세요. ':'';
   const clockNote=differentClock?'두 차량 기록의 시간 기준이 다릅니다. 현재 기록을 새 기준으로 지정해 주세요. ':'';
   const storageError=state.error?'<span id="progress-error" role="status"></span> ':'';
-  return title('습관 비교','비슷한 조건의 두 주행을 거리당 이벤트 수로 비교합니다.',action)+`${context}<p>${distances}</p><div class="split">${panels}</div><div class="note">${storageError}${state.basePinned?'기준 주행이 고정되어 있습니다. ':state.base?'':'비교할 기준 주행이 아직 없습니다. '}${state.demonstration?'시연 데이터입니다. 비교하려면 같은 유형의 기록을 두 번 분석하세요.':'기준과 비교 데이터의 노선·교통 조건은 사용자가 확인해야 합니다.'} ${repeatNote}${state.base&&(state.base.missingSeconds||r.missingSeconds)?'신호 누락이 있는 비교에서는 변화율을 표시하지 않습니다. ':''}${versionNote}${clockNote}비율 변화는 비용 절감액으로 환산하지 않습니다.</div>`;
+  return title('AI 운전 코칭','비슷한 노선과 교통 조건에서 개선 전후의 운전습관을 비교하세요.',action)+`${context}<p>${distances}</p><div class="split">${panels}</div><div class="note">${storageError}${state.basePinned?'기준 주행이 고정되어 있습니다. ':state.base?'':'비교할 기준 주행이 아직 없습니다. '}${state.demonstration?'시연 데이터입니다. 비교하려면 같은 유형의 기록을 두 번 분석하세요.':'기준과 비교 데이터의 노선·교통 조건은 사용자가 확인해야 합니다.'} ${repeatNote}${state.base&&(state.base.missingSeconds||r.missingSeconds)?'신호 누락이 있는 비교에서는 변화율을 표시하지 않습니다. ':''}${versionNote}${clockNote}비율 변화는 비용 절감액으로 환산하지 않습니다.</div>
+    <article class="card budget-section"><h2>다음 주행에서 바꿀 행동</h2><p>${coachingSummary(r)}</p>
+    <p class="subtle">${state.base&&r.km>0?`단거리 기준 10 km · 기준 ${state.base.km<10?'단거리':'장거리'} → 현재 ${r.km<10?'단거리':'장거리'}`:'최근 두 기록이 있으면 단거리 여부의 변화도 표시합니다.'}</p><p class="subtle">${shortTrend}</p></article>`;
 }
 function estimateRange(items){
   let low=0,high=0;
@@ -247,7 +408,8 @@ try{
 }catch{}
 
 function ownershipForecast(month){
-  const months=forecastMonths(month,budgets,forecast.premium);
+  const projections=monthlyServiceProjections(month);
+  const months=forecastMonths(month,[...budgets,...projections],forecast.premium);
   const cost=months.reduce((total,entry)=>({low:total.low+Math.round(entry.low*100),
     high:total.high+Math.round(entry.high*100)}),{low:0,high:0});
   const insurance=forecast.premium===null?null:Math.round(forecast.premium*100)*months.length/100;
@@ -265,7 +427,9 @@ function ownershipForecast(month){
       <button class="button primary">보험료 반영</button>
       <p id="insurance-error" class="warn" role="status"></p>
     </form>
-    <p class="subtle">예정 월이 없는 정비 견적은 제외합니다. 입력한 보험료는 12개월 동안 같은 금액으로 계산합니다.</p>
+    <p class="subtle">예정 월이 없는 견적은 제외합니다. 같은 부품의 등록 견적이 있으면 자동 전망과 중복 합산하지 않습니다. 월 보험료는 입력한 금액으로 유지합니다.</p>
+    <p class="subtle">예상 교체 월을 계산할 수 있고 교체비를 등록한 부품만 자동 반영합니다.</p>
+    <p class="subtle">교체 전망 반영 ${projections.length}건 ${projections.map(q=>escapeText(q.part)+' · '+monthLabel(q.month)).join(', ')}</p>
     <div class="forecast-total"><span>${insurance===null?'12개월 등록 정비비 · 보험료 미입력':'12개월 정비비와 보험료 합계'}</span>
     <strong class="big">${insurance===null?estimateRange([{low:cost.low/100,high:cost.high/100}]):total}</strong></div>
     <details><summary>월별 지출 내역</summary><div class="forecast-table">
@@ -324,6 +488,8 @@ function storeForecast(next,errorSelector){
 function budget(r){
   const month=nextCalendarMonth();
   const monthly=budgets.filter(q=>q.month===month);
+  const projected=monthlyServiceProjections(month).filter(q=>q.month===month);
+  const monthItems=[...monthly,...projected];
   const references=monthly.filter(q=>q.reference===true).length;
   const quote=editingQuote===null?null:budgets[editingQuote];
   const part=quote?.part??referencePart;
@@ -339,18 +505,18 @@ function budget(r){
     :turns?'빠른 코너링이 반복되면 타이어가 고르게 닳지 않을 수 있습니다.'
     :'이 기록에서 급코너링 이벤트가 잡히지 않았습니다.';
   const source=state.demonstration?'가상 주행 예시':state.vehicleSource?'차량 차속 기록':'가져온 CSV 기록';
-  const monthlyDetail=monthly.length
-    ?`등록 ${monthly.length}건 · 직접 입력 ${monthly.length-references}건 · 참고가 ${references}건`
+  const monthlyDetail=monthItems.length
+    ?`등록 견적 ${monthly.length}건 · 직접 입력 ${monthly.length-references}건 · 참고가 ${references}건 · 교체 전망 ${projected.length}건`
     :'다음 달에 예정된 정비가 없습니다. 견적과 예정 월을 입력해 보세요.';
   const rows=budgets.map((b,i)=>`<div class="row quote-row"><div><strong>${b.part}</strong>
     <p class="subtle">${monthLabel(b.month)} · ${b.reference?'미국 참고가':'직접 입력'}</p></div>
     <b>${estimateRange([b])}</b><div class="actions">
     <button class="button" data-edit="${i}" aria-label="${b.part} 견적 수정">수정</button>
     <button class="button" data-delete="${i}" aria-label="${b.part} 견적 삭제">삭제</button></div></div>`).join('');
-  return title('정비 예산','주행습관에서 확인할 부품을 찾고, 정비 견적 범위를 바탕으로 다음 달 지출을 계획하세요.')+
+  return title('My Car Budget','정비 견적 범위와 소모품 교체 전망을 월별·연간 유지비로 확인하세요.')+
     `<article class="card budget-summary"><div><span class="subtle">${monthLabel(month)}</span>
     <h2>다음 달 예상 지출</h2><p>${monthlyDetail}</p></div>
-    <strong class="big">${monthly.length?estimateRange(monthly):'—'}</strong></article>
+    <strong class="big">${monthItems.length?estimateRange(monthItems):'—'}</strong></article>
     <section class="budget-section" aria-labelledby="care-title"><div class="section-heading">
     <h2 id="care-title">주행습관으로 확인할 부품</h2><span class="pill">${source}</span></div>
     <div class="split">
@@ -376,10 +542,10 @@ function budget(r){
     ${partForecast(r)}${ownershipForecast(month)}`;
 }
 function vehicle(){
-  return title('차량 기록','차속과 변속 위치를 읽어 주차 후 주행 리포트를 엽니다.')+
+  return title('차량 데이터','차량 정보와 정비 이력을 관리하고, 주행 기록을 수집하세요.')+
     `<article class="card"><h2>차속 기록</h2><p id="vehicle-status" role="status"></p>
     <div class="actions"><button class="button primary" id="live-start"${!window.DriveVehicle?' disabled':''}>차량 기록 시작</button><button class="button" id="speed-replay">가상 차속 재생</button></div>
-    <div class="note">차량 기록에는 차속과 선택 기어를 읽을 권한이 필요합니다. P단에 두고 정차한 뒤 시작하세요. 가상 차속은 차량이 없는 환경에서 분석 흐름을 재현합니다.</div></article>`;
+    <div class="note">차량 기록에는 차속과 선택 기어를 읽을 권한이 필요합니다. P단에 두고 정차한 뒤 시작하세요. 가상 차속은 차량이 없는 환경에서 분석 흐름을 재현합니다.</div></article>`+dataPanels();
 }
 window.showVehicleStatus=function(message,busy){
   capture={message,busy};
@@ -422,6 +588,38 @@ function render(){
       catch{window.showVehicleStatus('차량 기록을 시작하지 못했습니다. 다시 시도해 주세요.',false);}
     };
     document.querySelector('#speed-replay').onclick=()=>{if(!capture.busy)receiveSpeed(speedReplay(),true);};
+    document.querySelector('#vehicle-profile-form').onsubmit=event=>{
+      event.preventDefault();
+      const form=new FormData(event.target);
+      const model=String(form.get('model')??'').trim().slice(0,60);
+      const year=readInteger(form,'year'),km=readInteger(form,'km'),monthlyKm=readInteger(form,'monthlyKm');
+      const powertrain=form.get('powertrain');
+      if(!model||!Object.keys(powertrains).includes(powertrain)||!intIn(year,1900,2100)||!intIn(km,0,9999999)
+          ||(monthlyKm!==null&&!intIn(monthlyKm,1,99999))){
+        document.querySelector('#profile-error').textContent='차량 모델, 연식, 주행거리를 확인해 주세요.';
+        return;
+      }
+      saveGarage({...garage,model,year,km,monthlyKm,powertrain},'#profile-error');
+    };
+    document.querySelector('#service-record-form').onsubmit=event=>{
+      event.preventDefault();
+      const form=new FormData(event.target);
+      const part=form.get('part'),action=form.get('action'),date=form.get('date');
+      const km=readInteger(form,'km'),cost=readAmount(form,'cost');
+      const memo=String(form.get('memo')??'').trim().slice(0,160);
+      if(!vehicleParts().includes(part)||!['교체','점검','정비'].includes(action)||!isDate(date)
+          ||new Date(date+'T00:00:00')>new Date()||!intIn(km,0,9999999)||Number.isNaN(cost)){
+        document.querySelector('#service-error').textContent='정비일, 주행거리 또는 비용을 확인해 주세요.';
+        return;
+      }
+      const record={part,action,date,km,cost,memo};
+      saveGarage({...garage,records:[...garage.records,record]},'#service-error');
+    };
+    document.querySelectorAll('[data-remove-service]').forEach(button=>button.onclick=()=>{
+      const index=Number(button.dataset.removeService);
+      saveGarage({...garage,records:garage.records.filter((_,i)=>i!==index)},'#service-error');
+    });
+
   }
   if(state.page==='overview'){
     document.querySelector('#error').textContent=state.error;
@@ -478,7 +676,28 @@ function render(){
       render();
     };
   }
-  if(state.page==='parts'){const selector=document.querySelector('#vehicle');selector.value=state.vehicle;selector.onchange=()=>{state.vehicle=selector.value;render();document.querySelector('#vehicle').focus();};}
+  if(state.page==='parts'){
+    document.querySelector('#parts-to-budget').onclick=()=>{state.page='budget';render();};
+    document.querySelectorAll('[data-part-card]').forEach(button=>button.onclick=()=>{
+      selectedPart=button.dataset.partCard;
+      render();
+      document.querySelector('[aria-pressed="true"]')?.focus?.();
+    });
+    document.querySelector('#service-rule-form').onsubmit=event=>{
+      event.preventDefault();
+      const form=new FormData(event.target);
+      const intervalKm=readInteger(form,'intervalKm')??0;
+      const intervalMonths=readInteger(form,'intervalMonths')??0;
+      const low=readAmount(form,'low'),high=readAmount(form,'high');
+      if(!intIn(intervalKm,0,1000000)||!intIn(intervalMonths,0,240)
+          ||(low===null)!==(high===null)||Number.isNaN(low)||Number.isNaN(high)||high<low){
+        document.querySelector('#rule-error').textContent='교체 기준과 최소·최대 비용 범위를 확인해 주세요.';
+        return;
+      }
+      const rule={intervalKm,intervalMonths,low,high};
+      saveGarage({...garage,rules:{...garage.rules,[selectedPart]:rule}},'#rule-error');
+    };
+  }
   if(state.page==='progress'){
     const error=document.querySelector('#progress-error');
     if(error)error.textContent=state.error;

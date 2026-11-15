@@ -10,12 +10,16 @@
   const decimal=/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
   function parseCSV(text){
     const lines=text.trim().split(/\r?\n/);
-    if(lines.shift()?.replace(/^\uFEFF/,'').trim()!=='t_s,speed_kmh,long_ms2,lat_ms2') throw Error('CSV 헤더를 확인해 주세요.');
+    const header=lines.shift()?.replace(/^\uFEFF/,'').trim();
+    const required='t_s,speed_kmh,long_ms2,lat_ms2';
+    const hasRpm=header===required+',engine_rpm';
+    if(header!==required&&!hasRpm)throw Error('CSV 헤더를 확인해 주세요. 선택 항목은 engine_rpm입니다.');
     const rows=lines.map((line,i)=>{
       const cells=line.split(',').map(cell=>cell.trim());
-      const [t,speed,long,lat]=cells.map(Number);
-      if(cells.length!==4||cells.some(value=>!decimal.test(value))||![t,speed,long,lat].every(Number.isFinite)||t<0||speed<0||speed>300||Math.abs(long)>MAX_ACCELERATION||Math.abs(lat)>MAX_ACCELERATION) throw Error(`${i+2}행의 값이 올바르지 않습니다.`);
-      return {t,speed,long,lat};
+      const [t,speed,long,lat,rpm]=cells.map(Number);
+      if(cells.length!==(hasRpm?5:4)||cells.some((value,index)=>!(hasRpm&&index===4&&value==='')&&!decimal.test(value))||![t,speed,long,lat].every(Number.isFinite)||t<0||speed<0||speed>300||Math.abs(long)>MAX_ACCELERATION||Math.abs(lat)>MAX_ACCELERATION
+          ||(hasRpm&&(!Number.isFinite(rpm)||rpm<0||rpm>20000))) throw Error(`${i+2}행의 값이 올바르지 않습니다.`);
+      return {t,speed,long,lat,...(hasRpm&&cells[4]!==''?{rpm}:{})};
     });
     if(rows.length<3) throw Error('3개 이상의 샘플이 필요합니다.');
     rows.forEach((s,i)=>{if(i&&(s.t<=rows[i-1].t||s.t-rows[i-1].t>5)) throw Error('시간은 오름차순이며 샘플 간격은 5초 이하여야 합니다.');});
