@@ -20,3 +20,13 @@ test('service due uses the latest replacement and the earlier mileage or calenda
   assert.deepEqual(serviceDue(profile,entries,'타이어',day),{dueKm:60000,month:'2025-08',overdue:true});
   assert.equal(serviceDue(profile,entries,'브레이크',day),null);
 });
+
+test('severe driving uses only the separately registered schedule',()=>{
+  const today=new Date(2026,0,1,12);
+  const record={part:'냉각수',action:'교체',date:'2025-12-31',km:10000};
+  const profile={km:11000,monthlyKm:0,usage:'severe',rules:{냉각수:{intervalMonths:12}}};
+  assert.equal(serviceDue(profile,[record],'냉각수',today),null);
+  profile.severeRules={냉각수:{intervalMonths:3}};
+  assert.equal(serviceDue(profile,[record],'냉각수',today).month,'2026-03');
+  assert.equal(serviceDue({...profile,usage:'normal'},[record],'냉각수',today).month,'2026-12');
+});

@@ -5,6 +5,9 @@ const serviceParts={
   '타이어':{habit:'잦은 급코너링과 급가감속은 타이어 부담을 살필 단서입니다.',check:'냉간 공기압·트레드 깊이·편마모',coach:'코너에 들어가기 전에 속도를 줄이고 부드럽게 조향하세요.'},
   '브레이크':{habit:'잦은 급감속은 마찰제동을 사용하는 상황에서 패드·로터 부담을 살필 단서입니다.',check:'패드 두께·로터 상태',coach:'전방 흐름을 일찍 확인해 여유 있게 감속하세요. 필요한 제동은 즉시 하세요.'},
   '배터리':{habit:'잦은 짧은 운행에서는 12V 배터리의 충전 상태를 살펴보세요.',check:'12V 배터리 상태·시동 또는 전원 계통 점검',coach:'전원이 꺼진 상태에서 전장품 사용을 줄이고, 시동이나 전원 문제가 반복되면 점검을 받으세요.'},
+  '냉각수':{habit:'차종에 맞는 냉각 계통의 점검 기준을 확인하세요.',check:'냉각수 종류와 제조사 점검·교환 기준',coach:'계기판 경고가 나오면 차량 매뉴얼에 따라 대응하세요.'},
+  '엔진 에어필터':{habit:'먼지가 많은 환경을 주로 운행한다면 매뉴얼의 점검 주기를 확인하세요.',check:'엔진 흡기 필터의 오염 상태와 정비 이력',coach:'실제 오염 상태는 정비 점검으로 확인하세요.'},
+  '캐빈 필터':{habit:'캐빈 필터는 차량 실내 공조 계통의 소모품입니다.',check:'캐빈 필터 교체 이력과 제조사 점검 기준',coach:'공조 사용 환경에 맞춰 차량 매뉴얼의 정비 기준을 확인하세요.'},
   '변속기 오일':{habit:'반복적인 급가속과 가혹한 운행 조건에서는 차량별 기준을 확인하세요.',check:'장착된 변속기 유형·제조사 점검 기준',coach:'속도를 부드럽게 높이고 견인이나 정체가 잦으면 제조사 가혹 조건을 확인하세요.'}
 };
 
@@ -26,8 +29,12 @@ function addCalendarMonths(date,months){
   return new Date(end.getFullYear(),end.getMonth(),Math.min(date.getDate(),end.getDate()),12);
 }
 
+function serviceRules(profile){
+  return (profile.usage==='severe'?profile.severeRules:profile.rules)??{};
+}
+
 function serviceDue(profile,records,part,today=new Date()){
-  const rule=profile.rules?.[part];
+  const rule=serviceRules(profile)[part];
   const last=records.filter(record=>record.part===part&&record.action==='교체')
     .sort((a,b)=>b.date.localeCompare(a.date)||b.km-a.km)[0];
   if(!last||!rule||(!rule.intervalKm&&!rule.intervalMonths))return null;
@@ -44,4 +51,4 @@ function serviceDue(profile,records,part,today=new Date()){
   return {dueKm,month:key,overdue:Boolean(due&&due<=today)||Boolean(dueKm!==null&&profile.km!==null&&dueKm<=profile.km)};
 }
 
-if(typeof module!=='undefined')module.exports={serviceParts,tripContext,addCalendarMonths,serviceDue};
+if(typeof module!=='undefined')module.exports={serviceParts,tripContext,addCalendarMonths,serviceDue,serviceRules};

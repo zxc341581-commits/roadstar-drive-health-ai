@@ -23,7 +23,7 @@ else
 fi
 (cd "$work/classes" && zip -qr "$work/classes.jar" .)
 "$tools/d8" --release --min-api 28 --lib "$platform" --lib "$car_jar" --output "$work/dex" "$work/classes.jar"
-"$tools/aapt2" link --manifest app/src/main/AndroidManifest.xml -I "$platform" --min-sdk-version 28 --target-sdk-version 35 --version-code 8 --version-name 0.5.0 -A app/src/main/assets -o "$work/base.apk"
+"$tools/aapt2" link --manifest app/src/main/AndroidManifest.xml -I "$platform" --min-sdk-version 28 --target-sdk-version 35 --version-code 9 --version-name 0.5.1 -A app/src/main/assets -o "$work/base.apk"
 (cd "$work/dex" && zip -q -j "$work/base.apk" classes.dex)
 "$tools/zipalign" -f 4 "$work/base.apk" "$work/aligned.apk"
 "$tools/apksigner" sign --ks "$DRIVE_KEYSTORE" --ks-key-alias "$DRIVE_KEY_ALIAS" --ks-pass env:DRIVE_STORE_PASS --key-pass env:DRIVE_KEY_PASS --out "$pending/DriveHealthAI.apk" "$work/aligned.apk"
