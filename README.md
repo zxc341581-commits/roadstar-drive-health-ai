@@ -4,7 +4,7 @@
 
 ## 릴리스 APK와 실행 방법
 
-- 버전 **0.5.2** (versionCode 10), 패키지 `com.drivehealthai.demo`, Android 9(API 28) 이상.
+- 버전 **0.5.3** (versionCode 11), 패키지 `com.drivehealthai.demo`, Android 9(API 28) 이상.
 - APK 위치는 [`apk/로드스타_DriveHealthAI_release.apk`](apk/로드스타_DriveHealthAI_release.apk)입니다. 로드스타 팀의 공모전 제출용 파일입니다.
 - 설치 후 **Drive Health AI**를 실행합니다. 개발 환경에서는 `adb install apk/로드스타_DriveHealthAI_release.apk`로 설치를 시도할 수 있습니다. 이 릴리스는 v0.2.1과 같은 인증서를 사용합니다. v0.2.0과는 인증서가 달라 v0.2.0 위에 덮어 설치할 수 없습니다. 제거하면 기기에 저장된 기존 주행 기록과 견적이 삭제됩니다.
 - [`app/src/main/assets/index.html`](app/src/main/assets/index.html)을 Chromium에서 열어 같은 웹 화면과 분석 엔진을 실행할 수 있습니다. 설치형 시제품에 API 키나 계정은 필요하지 않습니다.
@@ -22,15 +22,23 @@
 | 항목 | 환경과 확인 범위 |
 | --- | --- |
 | 빌드 | Linux x86_64, OpenJDK 21, ECJ 3.38.0, Android SDK Platform 35와 Build Tools 35.0.0, 선택적 라이브러리 `android.car.jar` |
-| APK 확인 | `apksigner verify`로 v3 릴리스 서명, `zipalign -c 4`로 정렬을 검증했습니다. 앱 ID, v0.5.2, 최소 API 28, 시작 Activity와 APK 안의 웹 파일 6개가 동봉 소스와 일치함을 확인했습니다. |
+| APK 확인 | `apksigner verify`로 v3 릴리스 서명, `zipalign -c 4`로 정렬을 검증했습니다. 앱 ID, v0.5.3, 최소 API 28, 시작 Activity와 APK 안의 웹 파일 6개가 동봉 소스와 일치함을 확인했습니다. |
 | 브라우저 시연 | v0.2.1의 웹 화면을 Chromium 131.0.6778.0, 뷰포트 1280×610, 시연 출력 1280×720. 가상 차속, 부품별 코칭, 두 CSV 비교와 조건 확인, 견적 추가·수정을 실행했습니다. |
 | v0.3.0 확인 | JS 회귀 테스트 34개 통과. Chromium에서 1280×900과 390×844 화면으로 정비 예정 월, 참고가 저장, 견적 수정과 재실행 시 복원을 확인했습니다. |
 | 자동 검사 이력 | v0.2.1에서 `node --test tests/*.test.cjs` 31개 통과. `python3 tests/check-recorder.py`로 가상 JVM 차량 신호 시험, `bash tests/check-build-publish.sh`로 모의 APK 교체 시험을 통과했습니다. |
 | 개발에 사용한 Pleos Connect 에뮬레이터 | 사용하지 않았습니다. 개발에 사용한 Pleos 에뮬레이터의 버전·화면 실측값은 해당 사항이 없습니다. |
 | Pleos 적용 대상 | 공식 Pleos Connect Emulator v2.1.0, Android Automotive API 34. [공식 설치 가이드](https://document.pleos.ai/docs/connect/guide/getting-started/application-development/setup-connect-sdk-emulator) |
-| 실제 시연 화면 규격 | Chromium에서 앱 뷰포트 1280×610, 시연 영상 출력 1280×720(16:9). |
+| 차량용 UI 기준 | 앱 영역 1280×610 CSS px, 기존 시연 출력 1280×720(16:9). 화면 크기에 따라 메뉴와 카드 열 수를 조정합니다. |
+| 차량용 UI 확인 | Chromium에서 1280×610, 1600×720, 960×540, 720×960, 390×844 CSS px의 주간·야간 화면과 터치 대상 크기를 확인했습니다. 실제 화면의 픽셀 수와 물리 크기는 차량 및 Pleos 창 설정에 따라 달라집니다. |
 
 차량 기록은 AAOS `CarPropertyManager`의 `PERF_VEHICLE_SPEED`(m/s)와 `GEAR_SELECTION`을 사용합니다. v0.2.2는 Android 10 이상에서 차량 서비스가 연결 준비를 알린 뒤 신호 읽기를 시작합니다. 연결 대기 시간은 5초이며 서비스가 끊기면 기록을 종료하고 저장된 자료를 보존합니다. 차량에서 차속·선택 기어 읽기 권한과 속성 지원이 필요합니다. 일반 Android, Pleos 에뮬레이터·실차에서 이번 차량 연동의 실행 검증은 수행하지 않았습니다. 가상 차속과 CSV 분석은 이 권한 없이 사용할 수 있습니다. 시연 영상은 브라우저에서 녹화했으며 차량 신호는 가상 입력입니다. [Pleos 차량 차속 문서](https://document.pleos.ai/en/docs/pleos-only/vehicle-app-developer-guide/vehicle-app-faq)
+
+## 차량용 화면
+
+- 가로 화면은 왼쪽 메뉴를 고정합니다. 좁은 앱 창에서는 메뉴가 위로 이동하고, 상세 카드는 한 열로 표시됩니다.
+- 주요 버튼과 입력칸은 가로 기준 최소 56 CSS px 높이, 좁은 창에서는 최소 48 CSS px 높이입니다. 시작 시 시스템 테마를 따르며 상단 버튼에서 주간·야간을 선택할 수 있습니다.
+- 차량 기록 중에는 기존 기록 전용 화면을 유지합니다. Android에서 시스템 바, 화면 컷아웃 및 키보드의 인셋을 WebView에 반영합니다.
+- 화면 설계 참고 자료 [Pleos Connect UI Design Guide](https://document.pleos.ai/docs/connect/guide/docs-design/Introduction/intro) · [Display Layout](https://document.pleos.ai/en/docs/connect/guide/docs-design/getting-started/layout)
 
 ## 계산과 보관
 

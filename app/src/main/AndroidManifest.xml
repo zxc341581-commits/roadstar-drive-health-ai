@@ -6,7 +6,7 @@
   <uses-permission android:name="android.car.permission.CAR_POWERTRAIN"/>
   <application android:label="Drive Health AI" android:allowBackup="false" android:theme="@android:style/Theme.Material.NoActionBar">
     <uses-library android:name="android.car" android:required="false"/>
-    <activity android:name=".MainActivity" android:exported="true">
+    <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
         <category android:name="android.intent.category.LAUNCHER"/>

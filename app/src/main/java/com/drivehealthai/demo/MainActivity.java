@@ -3,6 +3,7 @@ package com.drivehealthai.demo;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.webkit.JavascriptInterface;
 import org.json.JSONObject;
 import android.net.Uri;
@@ -28,7 +29,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         view = new WebView(this);
-        view.setBackgroundColor(0xfff4f6f8);
+        view.setBackgroundColor(isNightMode() ? 0xff0b1521 : 0xffeef2f6);
         view.getSettings().setJavaScriptEnabled(true);
         view.getSettings().setDomStorageEnabled(true);
         view.getSettings().setAllowFileAccess(false);
@@ -60,8 +61,10 @@ public final class MainActivity extends Activity {
         if (android.os.Build.VERSION.SDK_INT >= 30) {
             view.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
                 @Override public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
-                    android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
-                    v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                    int safeArea = WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()
+                            | WindowInsets.Type.ime();
+                    android.graphics.Insets safe = insets.getInsets(safeArea);
+                    v.setPadding(safe.left, safe.top, safe.right, safe.bottom);
                     return insets;
                 }
             });
@@ -70,7 +73,16 @@ public final class MainActivity extends Activity {
         view.loadUrl(HOME);
     }
 
+    private boolean isNightMode() {
+        return (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+    }
+
     public final class VehicleBridge {
+        @JavascriptInterface public boolean isNightMode() {
+            return MainActivity.this.isNightMode();
+        }
+
         @JavascriptInterface public void start() {
             runOnUiThread(new Runnable() {
                 @Override public void run() { startVehicleRecording(); }

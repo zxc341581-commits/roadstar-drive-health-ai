@@ -1,6 +1,5 @@
 'use strict';
 const {TYPES,parseCSV,analyze,hasGap,demo,rate,fromSpeedSamples,speedReplay}=DriveEngine;
-const names={vehicle:'차량 데이터',overview:'AI 주행 분석',parts:'소모품 통합 관리',progress:'AI 운전 코칭',budget:'My Car Budget'};
 const state={page:'overview',rows:demo(),base:null,basePinned:false,demonstration:true,vehicleSource:'',improved:false,error:''};
 let capture={busy:false,message:'주차 상태에서 차량 기록을 시작하세요.'};
 const tripKey='drive-health-trip-v1';
@@ -338,7 +337,7 @@ function drivingContext(r){
 function overview(r){
   const alternative=otherSavedKind();
   const restoreLabel=alternative==='csv'?'최근 CSV':'최근 차량 기록';
-  const action=`<div class="actions">${!state.demonstration?'<button class="button" id="forget">최근 기록 삭제</button>':''}<button class="button" id="open-budget">부품 점검·예산</button><button class="button" id="reset">예제 주행</button>${alternative?'<button class="button" id="restore">'+restoreLabel+'</button>':''}<button class="button primary" id="import">CSV 분석</button><input type="file" id="file" accept=".csv,text/csv" hidden></div>`;
+  const action=`<div class="actions">${!state.demonstration?'<button class="button" id="forget">최근 기록 삭제</button>':''}<button class="button" id="open-budget">정비 예산</button><button class="button" id="reset">예제 주행</button>${alternative?'<button class="button" id="restore">'+restoreLabel+'</button>':''}<button class="button primary" id="import">CSV 분석</button><input type="file" id="file" accept=".csv,text/csv" hidden></div>`;
   const cards=[['분석 주행거리',fmt(r.km)+' km',r.missingSeconds>0?'수집된 구간만 계산':'시간과 차속으로 계산'],['급감속',count(r,'brake')+'건',fmt(rate(count(r,'brake'),r.km))+'건 / 100km'],['급코너링',speedOnly()?'—':count(r,'turn')+'건',speedOnly()?'횡가속도 신호 미수집':fmt(rate(count(r,'turn'),r.km))+'건 / 100km']].map(([t,v,d])=>`<div class="card metric"><h3>${t}</h3><strong>${v}</strong><p>${d}</p></div>`).join('');
   const events=r.events.slice(0,100).map(e=>`<div class="event"><strong>${TYPES.find(t=>t.id===e.type).label}</strong><span>${timer(e.t-state.rows[0].t)} · ${fmt(e.peak)} m/s²</span></div>`).join('');
   const duration=state.rows[state.rows.length-1].t-state.rows[0].t;
@@ -596,6 +595,7 @@ function receiveSpeed(samples,simulated,vehicleClock=false){
 }
 window.acceptVehicleTrip=(samples,vehicleClock)=>receiveSpeed(samples,false,vehicleClock);
 function render(){
+  document.querySelector('#theme-toggle').disabled=capture.busy;
   if(capture.busy){
     document.querySelectorAll('nav button').forEach(button=>button.disabled=true);
     document.querySelector('#crumb').textContent='차량 기록';
@@ -607,7 +607,7 @@ function render(){
   }
   document.querySelectorAll('nav button').forEach(button=>button.disabled=false);
   const r=analyze(state.rows);
-  document.querySelector('#crumb').textContent=names[state.page];
+  document.querySelector('#crumb').textContent=garage.model||'차량 관리';
   document.querySelector('#source').textContent=state.vehicleSource||(state.demonstration?'시뮬레이션 데이터':'가져온 CSV');
   document.querySelectorAll('nav button').forEach(b=>{b.classList.toggle('on',b.dataset.page===state.page);b.setAttribute('aria-current',b.dataset.page===state.page?'page':'false');});
   content.innerHTML=({overview,parts,progress,budget,vehicle})[state.page](r);
@@ -655,7 +655,7 @@ function render(){
   }
   if(state.page==='overview'){
     document.querySelector('#error').textContent=state.error;
-    document.querySelector('#open-budget').onclick=()=>{state.page='budget';render();};
+    document.querySelector('#open-budget').onclick=()=>showPage('budget');
     const reset=()=>{
       importRequest++;
       comparableRoute=false;
@@ -709,7 +709,7 @@ function render(){
     };
   }
   if(state.page==='parts'){
-    document.querySelector('#parts-to-budget').onclick=()=>{state.page='budget';render();};
+    document.querySelector('#parts-to-budget').onclick=()=>showPage('budget');
     document.querySelectorAll('[data-part-card]').forEach(button=>button.onclick=()=>{
       selectedPart=button.dataset.partCard;
       render();
@@ -837,5 +837,38 @@ function render(){
     });
   }
 }
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{if(!capture.busy){editingQuote=null;referencePart=null;state.page=b.dataset.page;render();}});
+function showPage(page){
+  if(capture.busy)return;
+  editingQuote=null;
+  referencePart=null;
+  state.page=page;
+  render();
+  window.scrollTo?.(0,0);
+}
+
+function setupTheme(){
+  const root=document.documentElement;
+  const button=document.querySelector('#theme-toggle');
+  const system=window.matchMedia('(prefers-color-scheme: dark)');
+  const key='drive-health-theme';
+  let manual;
+  try{manual=localStorage.getItem(key);}catch{}
+  const apply=()=>{
+    const dark=manual==='dark'||(manual!=='light'&&(window.DriveVehicle?.isNightMode?.()??system.matches));
+    root.dataset.theme=dark?'dark':'light';
+    button.setAttribute('aria-pressed',String(dark));
+    button.querySelector('span').textContent=dark?'주간':'야간';
+    button.setAttribute('aria-label',dark?'주간 테마로 전환':'야간 테마로 전환');
+  };
+  button.onclick=()=>{
+    manual=root.dataset.theme==='dark'?'light':'dark';
+    try{localStorage.setItem(key,manual);}catch{}
+    apply();
+  };
+  system.addEventListener('change',apply);
+  apply();
+}
+
+document.querySelectorAll('nav button').forEach(button=>button.onclick=()=>showPage(button.dataset.page));
+if(document.documentElement)setupTheme();
 render();
